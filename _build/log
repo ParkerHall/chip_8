@@ -1,0 +1,6 @@
+# dune init project chip_8
+# OCAMLPARAM: unset
+# Shared cache: enabled-except-user-rules
+# Shared cache location: /Users/phall/.cache/dune/db
+# Workspace root: /Users/phall/Desktop/projects/chip_8
+# Auto-detected concurrency: 8
