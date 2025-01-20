@@ -1,2 +1,3 @@
 (library
- (name chip_8))
+ (name chip_8)
+ (libraries core graphics))
