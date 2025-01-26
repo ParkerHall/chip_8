@@ -1,3 +1,5 @@
+chip_8__Display
 chip_8__Emulator
 chip_8__Memory
-chip_8__Pixel_graphics
+chip_8__Opcode
+chip_8__Registers
