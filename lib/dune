@@ -1,3 +1,5 @@
 (library
  (name chip_8)
- (libraries core graphics))
+ (libraries core graphics integers)
+ (preprocess
+  (pps ppx_jane)))
