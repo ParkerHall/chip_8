@@ -53,13 +53,6 @@ let clear t =
   let () = Graphics.clear_graph () in
   { t with set = Location.Set.empty }
 
-let run_test () =
-  let t = init () in
-  let t =
-    List.init 20 ~f:Fn.id |> List.fold ~init:t ~f:(fun t i -> set t ~x:i ~y:i)
-  in
-  Graphics.read_key () |> ignore;
-  let (_ : t) =
-    List.init 10 ~f:Fn.id |> List.fold ~init:t ~f:(fun t i -> unset t ~x:i ~y:i)
-  in
-  Graphics.read_key () |> ignore
+module Testing = struct
+  let freeze (_ : t) = Graphics.read_key () |> ignore
+end

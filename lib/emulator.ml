@@ -25,8 +25,7 @@ module State = struct
     }
 end
 
-let handle_opcode (state : State.t) raw_opcode =
-  let opcode = Opcode.decode_exn raw_opcode in
+let handle_opcode' (state : State.t) (opcode : Opcode.t) =
   match opcode with
   | Clear_screen ->
       let display = Display.clear state.display in
@@ -66,24 +65,52 @@ let handle_opcode (state : State.t) raw_opcode =
                           in
                           let () =
                             match pixel_status with
-                            | `Out_of_bounds | `Set -> ()
+                            | `Out_of_bounds -> print_endline "out of bounds"
+                            | `Set -> print_endline "set"
                             | `Unset ->
+                                print_endline "unset";
                                 Registers.set_flag_register state.registers
                           in
                           new_display))
       in
       { state with display }
-(*
-      List.init 8 ~f:(fun j -> (byte lsr (7 - j)) land 1 = 1)
-      |> List.iteri ~f:(fun j pixel ->
-        let x = x + j in
-        let display = if pixel then Display.set state.display ~x ~y else Display.unset state.display ~x ~y in
-        { state with display }) *)
 
-let run_test () =
-  let memory = Memory.init () in
-  List.init 4096 ~f:Fn.id
-  |> List.iter ~f:(fun loc ->
-         let value = loc land 0xFF in
-         Memory.write memory ~loc value);
-  print_endline (Memory.to_string_hum memory)
+let handle_opcode state raw_opcode =
+  let opcode = Opcode.decode_exn raw_opcode in
+  handle_opcode' state opcode
+
+module Testing = struct
+  module Constants = struct
+    include Constants
+
+    let bytes_per_char = 5
+    let num_hex_chars = 16
+  end
+
+  let display_font_opcodes =
+    let start_x = 0 in
+    let start_y = 0 in
+    List.init Constants.num_hex_chars ~f:Fn.id
+    |> List.concat_map ~f:(fun i ->
+           [
+             Opcode.Set_index_register { value = i * Constants.bytes_per_char };
+             Opcode.Set_register
+               { index = 0; value = start_x + (i * Constants.bits_in_byte) };
+             Opcode.Set_register { index = 1; value = start_y };
+             Opcode.Draw
+               {
+                 x_index = 0;
+                 y_index = 1;
+                 num_bytes = Constants.bytes_per_char;
+               };
+           ])
+
+  let run_test opcodes =
+    let state =
+      List.fold opcodes ~init:(State.create ()) ~f:(fun state opcode ->
+          handle_opcode' state opcode)
+    in
+    Display.Testing.freeze state.display
+
+  let display_font () = run_test display_font_opcodes
+end
