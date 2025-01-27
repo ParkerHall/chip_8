@@ -1,1 +1,1 @@
-lib/memory.pp.mli: Core Unsigned
+lib/memory.pp.mli: Core

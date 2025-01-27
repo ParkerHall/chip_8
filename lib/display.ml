@@ -15,12 +15,16 @@ module Location = struct
   include Comparable.Make (T)
 end
 
-type t = { set : Location.Set.t }
+type t = { max_x : int; max_y : int; set : Location.Set.t }
 
 let init () =
   Graphics.open_graph "";
   Graphics.resize_window Constants.width Constants.height;
-  { set = Location.Set.empty }
+  {
+    max_x = Constants.width - 1;
+    max_y = Constants.height - 1;
+    set = Location.Set.empty;
+  }
 
 let fill_pixel ~x ~y ~color =
   Graphics.set_color color;
@@ -29,20 +33,25 @@ let fill_pixel ~x ~y ~color =
 
 let set t ~x ~y =
   let () = fill_pixel ~x ~y ~color:Graphics.black in
-  { set = Set.add t.set { Location.x; y } }
+  { t with set = Set.add t.set { Location.x; y } }
 
 let unset t ~x ~y =
   let () = fill_pixel ~x ~y ~color:Graphics.white in
-  { set = Set.remove t.set { Location.x; y } }
+  { t with set = Set.remove t.set { Location.x; y } }
 
 let is_set t ~x ~y = Set.mem t.set { Location.x; y }
 
 let flip t ~x ~y =
-  match is_set t ~x ~y with true -> unset t ~x ~y | false -> set t ~x ~y
+  match x < 0 || x > t.max_x || y < 0 || y > t.max_y with
+  | true -> (t, `Out_of_bounds)
+  | false -> (
+      match is_set t ~x ~y with
+      | true -> (unset t ~x ~y, `Unset)
+      | false -> (set t ~x ~y, `Set))
 
-let clear (_ : t) =
+let clear t =
   let () = Graphics.clear_graph () in
-  { set = Location.Set.empty }
+  { t with set = Location.Set.empty }
 
 let run_test () =
   let t = init () in
