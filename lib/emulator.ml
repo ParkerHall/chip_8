@@ -42,7 +42,13 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
       state
   | Set_index_register { value } -> { state with index_register = value }
   | Draw { x_index; y_index; num_bytes } ->
-      let initial_x = Registers.read_exn state.registers ~index:x_index in
+      (* N.B. phall (2025-01-27): [x] coordinates are modulo'd _only_ at the beginning.
+      The first coordinate always appears on screen, but future pixels that exceed the
+      display boundary do not wrap. *)
+      let initial_x =
+        Registers.read_exn state.registers ~index:x_index
+        % Display.Constants.pixel_width
+      in
       let initial_y = Registers.read_exn state.registers ~index:y_index in
       let display =
         List.init num_bytes ~f:Fn.id
@@ -61,14 +67,13 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
                       | true ->
                           let x = initial_x + dx in
                           let new_display, pixel_status =
-                            Display.flip display ~x ~y
+                            let location = Display.Location.create ~x ~y in
+                            Display.flip display location
                           in
                           let () =
                             match pixel_status with
-                            | `Out_of_bounds -> print_endline "out of bounds"
-                            | `Set -> print_endline "set"
+                            | `Out_of_bounds | `Set -> ()
                             | `Unset ->
-                                print_endline "unset";
                                 Registers.set_flag_register state.registers
                           in
                           new_display))
@@ -90,13 +95,21 @@ module Testing = struct
   let display_font_opcodes =
     let start_x = 0 in
     let start_y = 0 in
+    let display_hexchar_width =
+      Display.Constants.pixel_width / Constants.bits_in_byte
+    in
     List.init Constants.num_hex_chars ~f:Fn.id
     |> List.concat_map ~f:(fun i ->
+           let font_location = i * Constants.bytes_per_char in
+           let x = start_x + (i * Constants.bits_in_byte) + 1 in
+           let y =
+             start_y
+             + (i / display_hexchar_width * (Constants.bytes_per_char + 1))
+           in
            [
-             Opcode.Set_index_register { value = i * Constants.bytes_per_char };
-             Opcode.Set_register
-               { index = 0; value = start_x + (i * Constants.bits_in_byte) };
-             Opcode.Set_register { index = 1; value = start_y };
+             Opcode.Set_index_register { value = font_location };
+             Opcode.Set_register { index = 0; value = x };
+             Opcode.Set_register { index = 1; value = y };
              Opcode.Draw
                {
                  x_index = 0;
