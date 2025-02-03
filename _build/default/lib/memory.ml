@@ -1,8 +1,10 @@
 open! Core
+open! Async
 
 module Constants = struct
   let empty_char = '\x00'
   let bytes_in_memory = 4096
+  let program_start_location = 0x200
 end
 
 type t = Bytes.t [@@deriving sexp]
@@ -56,6 +58,20 @@ let init () =
   load_font t;
   t
 
+let clear_program_memory t =
+  Bytes.fill t ~pos:Constants.program_start_location
+    ~len:(Bytes.length t - Constants.program_start_location)
+    Constants.empty_char
+
+let load_program' t program =
+  clear_program_memory t;
+  Bytes.blit ~src:program ~src_pos:0 ~dst:t
+    ~dst_pos:Constants.program_start_location ~len:(Bytes.length program)
+
+let load_program t ~program_file =
+  let%map program = Reader.file_contents program_file >>| Bytes.of_string in
+  load_program' t program
+
 let to_string_hum t =
   Bytes.to_list t |> List.chunks_of ~length:4
   |> List.map ~f:(fun four_chars ->
@@ -73,3 +89,7 @@ let to_string_hum t =
 let read t ~loc = Bytes.get t loc |> int_of_char
 let read_hum t ~loc = read t ~loc |> Hexstring_helpers.format ~num_nibbles:2
 let write t ~loc value = Bytes.set t loc (char_of_int value)
+
+module Testing = struct
+  let load_program = load_program'
+end

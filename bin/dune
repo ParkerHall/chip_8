@@ -1,4 +1,6 @@
 (executable
  (public_name chip_8)
  (name main)
- (libraries chip_8 core))
+ (libraries chip_8 core)
+ (preprocess
+  (pps ppx_jane)))

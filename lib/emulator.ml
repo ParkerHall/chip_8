@@ -1,4 +1,5 @@
 open! Core
+open! Async
 
 module Constants = struct
   let bits_in_byte = 8
@@ -11,22 +12,27 @@ module State = struct
     memory : Memory.t;
     program_counter : int;
     registers : Registers.t;
-    stack : int Stack.t;
+    _stack : int Stack.t;
+    is_halted : bool;
   }
 
-  let create () =
+  let init () =
     {
       display = Display.init ();
       index_register = 0;
       memory = Memory.init ();
-      program_counter = 0;
+      program_counter = Memory.Constants.program_start_location;
       registers = Registers.init ();
-      stack = Stack.create ();
+      _stack = Stack.create ();
+      is_halted = false;
     }
+
+  let load_program t ~program_file = Memory.load_program t.memory ~program_file
 end
 
 let handle_opcode' (state : State.t) (opcode : Opcode.t) =
   match opcode with
+  | Halt -> { state with is_halted = true }
   | Clear_screen ->
       let display = Display.clear state.display in
       { state with display }
@@ -80,9 +86,30 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
       in
       { state with display }
 
-let handle_opcode state raw_opcode =
+let handle_opcode state ~opcode:raw_opcode =
   let opcode = Opcode.decode_exn raw_opcode in
   handle_opcode' state opcode
+
+let fetch (state : State.t) =
+  let first_half = Memory.read state.memory ~loc:state.program_counter in
+  let second_half = Memory.read state.memory ~loc:(state.program_counter + 1) in
+  (first_half lsl 8) lor second_half
+
+let run ~program_file =
+  let state = State.init () in
+  let%map () = State.load_program state ~program_file in
+  (* main fetch, decode, execute loop *)
+  let rec loop (state : State.t) =
+    match state.is_halted with
+    | true ->
+        print_s [%message "HALTING PROGRAM AFTER READING EMPTY OPCODE"];
+        state
+    | false ->
+        let opcode = fetch state in
+        { state with program_counter = state.program_counter + 2 }
+        |> handle_opcode ~opcode |> loop
+  in
+  loop state
 
 module Testing = struct
   module Constants = struct
@@ -118,12 +145,32 @@ module Testing = struct
                };
            ])
 
-  let run_test opcodes =
-    let state =
-      List.fold opcodes ~init:(State.create ()) ~f:(fun state opcode ->
-          handle_opcode' state opcode)
+  let manually_step_opcodes opcodes =
+    List.fold opcodes ~init:(State.init ()) ~f:(fun state opcode ->
+        handle_opcode' state opcode)
+    |> return
+
+  let load_and_run_emulator opcodes =
+    let tmp_filename = Filename_unix.temp_file "opcodes" "binary" in
+    let%bind () =
+      Writer.with_file tmp_filename ~f:(fun writer ->
+          Deferred.List.iter opcodes ~how:`Sequential ~f:(fun opcode ->
+              let binary = Opcode.encode opcode in
+              Writer.write_byte writer (binary lsr 8);
+              Writer.write_byte writer (binary land 0xFF);
+              Deferred.unit))
+    in
+    let%bind state = run ~program_file:tmp_filename in
+    let%bind () = Unix.remove tmp_filename in
+    return state
+
+  let run_test ~how opcodes =
+    let%map (state : State.t) =
+      match how with
+      | `manual_step -> manually_step_opcodes opcodes
+      | `load_and_run -> load_and_run_emulator opcodes
     in
     Display.Testing.freeze state.display
 
-  let display_font () = run_test display_font_opcodes
+  let display_font ~how = run_test ~how display_font_opcodes
 end

@@ -1,1 +1,1 @@
-lib/memory.pp.mli: Core
+lib/memory.pp.mli: Async Bytes Core Deferred
