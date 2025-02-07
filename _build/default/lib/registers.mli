@@ -1,6 +1,6 @@
 open! Core
 
-type t
+type t [@@deriving sexp_of]
 
 val init : unit -> t
 

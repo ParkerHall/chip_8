@@ -5,7 +5,7 @@ module Constants = struct
   let flag_register_index = 0xF
 end
 
-type t = int array
+type t = int array [@@deriving sexp_of]
 
 let init () = Array.create ~len:Constants.num_registers 0x0
 let read_exn t ~index = t.(index)

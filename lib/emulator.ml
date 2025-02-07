@@ -7,7 +7,7 @@ end
 
 module State = struct
   type t = {
-    display : Display.t;
+    display : (Display.t[@sexp.opaque]);
     index_register : int;
     memory : Memory.t;
     program_counter : int;
@@ -15,6 +15,7 @@ module State = struct
     _stack : int Stack.t;
     is_halted : bool;
   }
+  [@@deriving sexp_of]
 
   let init () =
     {

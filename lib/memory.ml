@@ -7,7 +7,7 @@ module Constants = struct
   let program_start_location = 0x200
 end
 
-type t = Bytes.t [@@deriving sexp]
+type t = Bytes.t [@@deriving sexp_of]
 
 let font =
   [

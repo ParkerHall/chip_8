@@ -1,1 +1,1 @@
-lib/registers.pp.mli: Core
+lib/registers.pp.mli: Core Sexplib0

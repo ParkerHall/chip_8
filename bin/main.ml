@@ -32,5 +32,20 @@ let testing_cmd =
        in
        test ~how)
 
-let command = Command.group ~summary:"chip-8 emulator" [ ("test", testing_cmd) ]
+let run_cmd =
+  Command.async_or_error ~summary:"run chip-8 emulator"
+    (let%map_open.Command program_file =
+       flag "program-file" (required string)
+         ~doc:"FILE binary file containing chip-8 program"
+     in
+     fun () ->
+       let%map (_ : Emulator.State.t) = Emulator.run ~program_file in
+       Or_error.error_s
+         [%message
+           "Loaded program unexpectedly finished" (program_file : string)])
+
+let command =
+  Command.group ~summary:"chip-8 emulator"
+    [ ("run", run_cmd); ("test", testing_cmd) ]
+
 let () = Command_unix.run command

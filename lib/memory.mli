@@ -5,7 +5,7 @@ module Constants : sig
   val program_start_location : int
 end
 
-type t
+type t [@@deriving sexp_of]
 
 (* initialzes memory and loads font *)
 val init : unit -> t
