@@ -23,28 +23,41 @@ module Location = struct
   include Comparable.Make (T)
 end
 
-type t = { max_x : int; max_y : int; set : Location.Set.t }
+type t = {
+  max_x : int;
+  max_y : int;
+  set : Location.Set.t;
+  disable_graphics : bool;
+}
 
-let init () =
-  Graphics.open_graph "";
-  Graphics.resize_window Constants.width Constants.height;
+let maybe_do_graphics t ~f = if not t.disable_graphics then f ()
+
+let init' ~disable_graphics =
   {
     max_x = Constants.pixel_width - 1;
     max_y = Constants.pixel_height - 1;
     set = Location.Set.empty;
+    disable_graphics;
   }
 
-let fill_pixel ~x ~y ~color =
+let init () =
+  let t = init' ~disable_graphics:false in
+  maybe_do_graphics t ~f:(fun () ->
+      Graphics.open_graph "";
+      Graphics.resize_window Constants.width Constants.height);
+  t
+
+let fill_pixel ~x ~y ~color () =
   Graphics.set_color color;
   Graphics.fill_rect (x * Constants.pixel_size) (y * Constants.pixel_size)
     Constants.pixel_size Constants.pixel_size
 
 let set t ~x ~y =
-  let () = fill_pixel ~x ~y ~color:Graphics.black in
+  maybe_do_graphics t ~f:(fill_pixel ~x ~y ~color:Graphics.black);
   { t with set = Set.add t.set { Location.x; y } }
 
 let unset t ~x ~y =
-  let () = fill_pixel ~x ~y ~color:Graphics.white in
+  maybe_do_graphics t ~f:(fill_pixel ~x ~y ~color:Graphics.white);
   { t with set = Set.remove t.set { Location.x; y } }
 
 let is_set t location = Set.mem t.set location
@@ -58,9 +71,22 @@ let flip t ({ Location.x; y } as loc) =
       | false -> (set t ~x ~y, `Set))
 
 let clear t =
-  let () = Graphics.clear_graph () in
+  maybe_do_graphics t ~f:Graphics.clear_graph;
   { t with set = Location.Set.empty }
 
+let freeze t = maybe_do_graphics t ~f:(fun () -> Graphics.read_key () |> ignore)
+
 module Testing = struct
-  let freeze (_ : t) = Graphics.read_key () |> ignore
+  let init_no_graphics () = init' ~disable_graphics:true
+
+  let dump_to_stdout t =
+    let ys = List.init Constants.pixel_height ~f:Fn.id in
+    let xs = List.init Constants.pixel_width ~f:Fn.id in
+    List.cartesian_product ys xs
+    |> List.iter ~f:(fun (y, x) ->
+           let location = Location.create ~x ~y in
+           let char = if is_set t location then "#" else " " in
+           match x = Constants.pixel_width - 1 with
+           | true -> print_endline char
+           | false -> print_string char)
 end

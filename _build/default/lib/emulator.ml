@@ -13,32 +13,56 @@ module State = struct
     program_counter : int;
     registers : Registers.t;
     _stack : int Stack.t;
-    is_halted : bool;
+    detect_jump_self_loop : bool;
+    halt_reason : Sexp.t option;
   }
   [@@deriving sexp_of]
 
-  let init () =
+  let init ~am_testing =
+    let display =
+      match am_testing with
+      | true -> Display.Testing.init_no_graphics ()
+      | false -> Display.init ()
+    in
     {
-      display = Display.init ();
+      display;
       index_register = 0;
       memory = Memory.init ();
       program_counter = Memory.Constants.program_start_location;
       registers = Registers.init ();
       _stack = Stack.create ();
-      is_halted = false;
+      detect_jump_self_loop = am_testing;
+      halt_reason = None;
     }
 
   let load_program t ~program_file = Memory.load_program t.memory ~program_file
+  let display t = t.display
 end
 
 let handle_opcode' (state : State.t) (opcode : Opcode.t) =
   match opcode with
-  | Halt -> { state with is_halted = true }
+  | Halt ->
+      let halt_reason = [%message "Decoded empty opcode (0x0000)!"] |> Some in
+      { state with halt_reason }
   | Clear_screen ->
       let display = Display.clear state.display in
       { state with display }
-  | Jump { new_program_counter } ->
-      { state with program_counter = new_program_counter }
+  | Jump { new_program_counter } -> (
+      let opcode_program_counter = state.program_counter - 2 in
+      match
+        state.detect_jump_self_loop
+        && opcode_program_counter = new_program_counter
+      with
+      | true ->
+          let halt_reason =
+            [%message
+              "Encountered infinite JUMP loop!"
+                (opcode_program_counter : int)
+                (opcode : Opcode.t)]
+            |> Some
+          in
+          { state with halt_reason }
+      | false -> { state with program_counter = new_program_counter })
   | Set_register { index; value } ->
       let () = Registers.write_exn state.registers ~index value in
       state
@@ -96,21 +120,23 @@ let fetch (state : State.t) =
   let second_half = Memory.read state.memory ~loc:(state.program_counter + 1) in
   (first_half lsl 8) lor second_half
 
-let run ~program_file =
-  let state = State.init () in
+let run' ~am_testing ~program_file =
+  let state = State.init ~am_testing in
   let%map () = State.load_program state ~program_file in
   (* main fetch, decode, execute loop *)
   let rec loop (state : State.t) =
-    match state.is_halted with
-    | true ->
-        print_s [%message "HALTING PROGRAM AFTER READING EMPTY OPCODE"];
+    match state.halt_reason with
+    | Some halt_reason ->
+        print_s [%message "HALTING" (halt_reason : Sexp.t)];
         state
-    | false ->
+    | None ->
         let opcode = fetch state in
         { state with program_counter = state.program_counter + 2 }
         |> handle_opcode ~opcode |> loop
   in
   loop state
+
+let run = run' ~am_testing:false
 
 module Testing = struct
   module Constants = struct
@@ -147,8 +173,8 @@ module Testing = struct
            ])
 
   let manually_step_opcodes opcodes =
-    List.fold opcodes ~init:(State.init ()) ~f:(fun state opcode ->
-        handle_opcode' state opcode)
+    List.fold opcodes ~init:(State.init ~am_testing:true)
+      ~f:(fun state opcode -> handle_opcode' state opcode)
     |> return
 
   let load_and_run_emulator opcodes =
@@ -171,7 +197,8 @@ module Testing = struct
       | `manual_step -> manually_step_opcodes opcodes
       | `load_and_run -> load_and_run_emulator opcodes
     in
-    Display.Testing.freeze state.display
+    Display.freeze state.display
 
   let display_font ~how = run_test ~how display_font_opcodes
+  let run = run' ~am_testing:true
 end
