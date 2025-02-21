@@ -41,37 +41,33 @@ end
 
 let handle_opcode' (state : State.t) (opcode : Opcode.t) =
   match opcode with
-  | Halt ->
-      let halt_reason = [%message "Decoded empty opcode (0x0000)!"] |> Some in
-      { state with halt_reason }
+  | Add_to_index_register { index } ->
+      let to_add = Registers.read_exn state.registers ~index in
+      { state with index_register = state.index_register + to_add }
+  | Binary_operation { x_index; y_index; operation } ->
+      let x = Registers.read_exn state.registers ~index:x_index in
+      let y = Registers.read_exn state.registers ~index:y_index in
+      let new_value =
+        match operation with
+        | `OR -> x lor y
+        | `AND -> x land y
+        | `XOR -> x lxor y
+      in
+      let () = Registers.write_exn state.registers ~index:x_index new_value in
+      state
+  | Add_to_register { index; to_add } ->
+      let old_value = Registers.read_exn state.registers ~index in
+      let to_add =
+        match to_add with
+        | Direct value -> value
+        | Register index -> Registers.read_exn state.registers ~index
+      in
+      let new_value = old_value + to_add in
+      let () = Registers.write_exn state.registers ~index new_value in
+      state
   | Clear_screen ->
       let display = Display.clear state.display in
       { state with display }
-  | Jump { new_program_counter } -> (
-      let opcode_program_counter = state.program_counter - 2 in
-      match
-        state.detect_jump_self_loop
-        && opcode_program_counter = new_program_counter
-      with
-      | true ->
-          let halt_reason =
-            [%message
-              "Encountered infinite JUMP loop!"
-                (opcode_program_counter : int)
-                (opcode : Opcode.t)]
-            |> Some
-          in
-          { state with halt_reason }
-      | false -> { state with program_counter = new_program_counter })
-  | Set_register { index; value } ->
-      let () = Registers.write_exn state.registers ~index value in
-      state
-  | Add_to_register { index; value } ->
-      let old_value = Registers.read_exn state.registers ~index in
-      let new_value = old_value + value in
-      let () = Registers.write_exn state.registers ~index new_value in
-      state
-  | Set_index_register { value } -> { state with index_register = value }
   | Draw { x_index; y_index; num_bytes } ->
       (* N.B. phall (2025-01-27): [x] coordinates are modulo'd _only_ at the beginning.
       The first coordinate always appears on screen, but future pixels that exceed the
@@ -110,6 +106,37 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
                           new_display))
       in
       { state with display }
+  | Halt ->
+      let halt_reason = [%message "Decoded empty opcode (0x0000)!"] |> Some in
+      { state with halt_reason }
+  | Jump { new_program_counter; with_offset = _ } -> (
+      let opcode_program_counter = state.program_counter - 2 in
+      match
+        state.detect_jump_self_loop
+        && opcode_program_counter = new_program_counter
+      with
+      | true ->
+          let halt_reason =
+            [%message
+              "Encountered infinite JUMP loop!"
+                (opcode_program_counter : int)
+                (opcode : Opcode.t)]
+            |> Some
+          in
+          { state with halt_reason }
+      | false -> { state with program_counter = new_program_counter })
+  | Set_index_register { value } -> { state with index_register = value }
+  | Set_register { index; to_ } ->
+      let value =
+        match to_ with
+        | Timer _ -> raise_s [%message "unimplemented"]
+        | Non_timer (Direct value) -> value
+        | Non_timer (Register index) ->
+            Registers.read_exn state.registers ~index
+      in
+      let () = Registers.write_exn state.registers ~index value in
+      state
+  | _ -> raise_s [%message "unimplemented"]
 
 let handle_opcode state ~opcode:raw_opcode =
   let opcode = Opcode.decode_exn raw_opcode in
@@ -162,8 +189,8 @@ module Testing = struct
            in
            [
              Opcode.Set_index_register { value = font_location };
-             Opcode.Set_register { index = 0; value = x };
-             Opcode.Set_register { index = 1; value = y };
+             Opcode.Set_register { index = 0; to_ = Non_timer (Direct x) };
+             Opcode.Set_register { index = 1; to_ = Non_timer (Direct y) };
              Opcode.Draw
                {
                  x_index = 0;
@@ -182,7 +209,7 @@ module Testing = struct
     let%bind () =
       Writer.with_file tmp_filename ~f:(fun writer ->
           Deferred.List.iter opcodes ~how:`Sequential ~f:(fun opcode ->
-              let binary = Opcode.encode opcode in
+              let binary = Opcode.encode_exn opcode in
               Writer.write_byte writer (binary lsr 8);
               Writer.write_byte writer (binary land 0xFF);
               Deferred.unit))
