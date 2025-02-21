@@ -5,34 +5,74 @@ module Constants = struct
   let bits_in_byte = 8
 end
 
-module State = struct
+module Options = struct
   type t = {
-    display : (Display.t[@sexp.opaque]);
-    index_register : int;
-    memory : Memory.t;
-    program_counter : int;
-    registers : Registers.t;
-    _stack : int Stack.t;
     detect_jump_self_loop : bool;
-    halt_reason : Sexp.t option;
+    disable_graphics : bool;
+    jump_with_offset : [ `NNN | `XNN ];
   }
   [@@deriving sexp_of]
 
-  let init ~am_testing =
+  let default_for_testing =
+    {
+      detect_jump_self_loop = true;
+      disable_graphics = true;
+      jump_with_offset = `NNN;
+    }
+
+  let default =
+    {
+      detect_jump_self_loop = false;
+      disable_graphics = false;
+      jump_with_offset = `NNN;
+    }
+
+  let flag =
+    let%map_open.Command detect_jump_self_loop =
+      flag "detect-jump-self-loop" no_arg
+        ~doc:" if specified, halts upon encountering JUMP self-loop"
+    and disable_graphics =
+      flag "disable-graphics" no_arg ~doc:" if specified, disables X11 graphics"
+    and jump_with_offset =
+      flag "super-chip-jump-with-offset" no_arg
+        ~doc:" if specified, use SUPER-CHIP JUMP with offset semantics"
+      >>| fun super_chip -> if super_chip then `XNN else `NNN
+    in
+    { detect_jump_self_loop; disable_graphics; jump_with_offset }
+end
+
+module State = struct
+  type t = {
+    mutable delay_timer : int;
+    display : (Display.t[@sexp.opaque]);
+    halt_reason : Sexp.t option;
+    index_register : int;
+    memory : Memory.t;
+    options : Options.t;
+    program_counter : int;
+    registers : Registers.t;
+    _stack : int Stack.t;
+    mutable sound_timer : int;
+  }
+  [@@deriving sexp_of]
+
+  let init ~(options : Options.t) =
     let display =
-      match am_testing with
+      match options.disable_graphics with
       | true -> Display.Testing.init_no_graphics ()
       | false -> Display.init ()
     in
     {
+      delay_timer = 0;
       display;
+      halt_reason = None;
       index_register = 0;
       memory = Memory.init ();
+      options;
       program_counter = Memory.Constants.program_start_location;
       registers = Registers.init ();
       _stack = Stack.create ();
-      detect_jump_self_loop = am_testing;
-      halt_reason = None;
+      sound_timer = 0;
     }
 
   let load_program t ~program_file = Memory.load_program t.memory ~program_file
@@ -44,6 +84,16 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
   | Add_to_index_register { index } ->
       let to_add = Registers.read_exn state.registers ~index in
       { state with index_register = state.index_register + to_add }
+  | Add_to_register { index; to_add } ->
+      let old_value = Registers.read_exn state.registers ~index in
+      let to_add =
+        match to_add with
+        | Direct value -> value
+        | Register index -> Registers.read_exn state.registers ~index
+      in
+      let new_value = old_value + to_add in
+      let () = Registers.write_exn state.registers ~index new_value in
+      state
   | Binary_operation { x_index; y_index; operation } ->
       let x = Registers.read_exn state.registers ~index:x_index in
       let y = Registers.read_exn state.registers ~index:y_index in
@@ -54,16 +104,6 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
         | `XOR -> x lxor y
       in
       let () = Registers.write_exn state.registers ~index:x_index new_value in
-      state
-  | Add_to_register { index; to_add } ->
-      let old_value = Registers.read_exn state.registers ~index in
-      let to_add =
-        match to_add with
-        | Direct value -> value
-        | Register index -> Registers.read_exn state.registers ~index
-      in
-      let new_value = old_value + to_add in
-      let () = Registers.write_exn state.registers ~index new_value in
       state
   | Clear_screen ->
       let display = Display.clear state.display in
@@ -109,10 +149,23 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
   | Halt ->
       let halt_reason = [%message "Decoded empty opcode (0x0000)!"] |> Some in
       { state with halt_reason }
-  | Jump { new_program_counter; with_offset = _ } -> (
+  | Jump { new_program_counter; with_offset } -> (
+      let new_program_counter =
+        match with_offset with
+        | false -> new_program_counter
+        | true ->
+            let index =
+              match state.options.jump_with_offset with
+              | `XNN -> new_program_counter lsr 8
+              | `NNN -> 0
+            in
+
+            let from_register = Registers.read_exn state.registers ~index in
+            new_program_counter + from_register
+      in
       let opcode_program_counter = state.program_counter - 2 in
       match
-        state.detect_jump_self_loop
+        state.options.detect_jump_self_loop
         && opcode_program_counter = new_program_counter
       with
       | true ->
@@ -129,7 +182,8 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
   | Set_register { index; to_ } ->
       let value =
         match to_ with
-        | Timer _ -> raise_s [%message "unimplemented"]
+        | Timer Delay -> state.delay_timer
+        | Timer Sound -> state.sound_timer
         | Non_timer (Direct value) -> value
         | Non_timer (Register index) ->
             Registers.read_exn state.registers ~index
@@ -147,8 +201,8 @@ let fetch (state : State.t) =
   let second_half = Memory.read state.memory ~loc:(state.program_counter + 1) in
   (first_half lsl 8) lor second_half
 
-let run' ~am_testing ~program_file =
-  let state = State.init ~am_testing in
+let run ~options ~program_file =
+  let state = State.init ~options in
   let%map () = State.load_program state ~program_file in
   (* main fetch, decode, execute loop *)
   let rec loop (state : State.t) =
@@ -161,9 +215,13 @@ let run' ~am_testing ~program_file =
         { state with program_counter = state.program_counter + 2 }
         |> handle_opcode ~opcode |> loop
   in
+  (* timer loop *)
+  Clock_ns.every
+    (Time_ns.Span.of_sec (1. /. 60.))
+    (fun () ->
+      state.delay_timer <- Int.max 0 (state.delay_timer - 1);
+      state.sound_timer <- Int.max 0 (state.sound_timer - 1));
   loop state
-
-let run = run' ~am_testing:false
 
 module Testing = struct
   module Constants = struct
@@ -200,7 +258,7 @@ module Testing = struct
            ])
 
   let manually_step_opcodes opcodes =
-    List.fold opcodes ~init:(State.init ~am_testing:true)
+    List.fold opcodes ~init:(State.init ~options:Options.default_for_testing)
       ~f:(fun state opcode -> handle_opcode' state opcode)
     |> return
 
@@ -214,7 +272,9 @@ module Testing = struct
               Writer.write_byte writer (binary land 0xFF);
               Deferred.unit))
     in
-    let%bind state = run ~program_file:tmp_filename in
+    let%bind state =
+      run ~options:Options.default_for_testing ~program_file:tmp_filename
+    in
     let%bind () = Unix.remove tmp_filename in
     return state
 
@@ -227,5 +287,5 @@ module Testing = struct
     Display.freeze state.display
 
   let display_font ~how = run_test ~how display_font_opcodes
-  let run = run' ~am_testing:true
+  let run = run ~options:Options.default_for_testing
 end

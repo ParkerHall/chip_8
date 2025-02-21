@@ -37,9 +37,9 @@ let run_cmd =
     (let%map_open.Command program_file =
        flag "program-file" (required string)
          ~doc:"FILE binary file containing chip-8 program"
-     in
+     and options = Emulator.Options.flag in
      fun () ->
-       let%map (_ : Emulator.State.t) = Emulator.run ~program_file in
+       let%map (_ : Emulator.State.t) = Emulator.run ~options ~program_file in
        Or_error.error_s
          [%message
            "Loaded program unexpectedly finished" (program_file : string)])
