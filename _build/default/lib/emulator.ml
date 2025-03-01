@@ -3,8 +3,8 @@ open! Async
 
 module Constants = struct
   let bits_in_byte = 8
-  let keypress_frequency = Time_ns.Span.of_ms 1.
-  let opcode_frequency = Time_ns.Span.of_sec (1. /. 360.)
+  let keypress_frequency = Time_ns.Span.of_ns 1.
+  let opcode_frequency = Time_ns.Span.of_sec (1. /. 180.)
   let max_8_bit_int = int_of_float (2. ** 8.) - 1
   let timer_frequency = Time_ns.Span.of_sec (1. /. 60.)
 
@@ -214,7 +214,7 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
       let hex_char = Registers.read_exn state.registers ~index land 0x0F in
       { state with index_register = Memory.Helpers.font_location ~hex_char }
   | Get_key { index } -> (
-      match Keyboard_input.current_key state.keyboard_input with
+      match Keyboard_input.take_key state.keyboard_input with
       | Some key ->
           Registers.write_exn state.registers ~index
             (Keyboard_input.Key.to_int key);
@@ -308,8 +308,9 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
       state
   | Skip_if_key { index; skip_if } ->
       let goal_key = Registers.read_exn state.registers ~index in
+      print_s [%message (goal_key : int)];
       let equal =
-        Keyboard_input.current_key state.keyboard_input
+        Keyboard_input.take_key state.keyboard_input
         |> Option.value_map ~default:false ~f:(fun key ->
                Keyboard_input.Key.to_int key = goal_key)
       in

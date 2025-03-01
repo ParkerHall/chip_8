@@ -60,17 +60,15 @@ let loop_forever t ~frequency =
   | true -> ()
   | false ->
       Clock_ns.every frequency (fun () ->
-          let char = ref None in
-          while Graphics.key_pressed () do
-            char := Graphics.read_key () |> Some
-          done;
-          let key =
-            let%bind.Option char = !char in
-            Key.of_char char
-          in
-          t.current_key <- key)
+          print_s [%message (t.current_key : Key.t option)];
+          match Graphics.key_pressed () with
+          | true -> t.current_key <- Key.of_char (Graphics.read_key ())
+          | false -> ())
 
-let current_key t = t.current_key
+let take_key t =
+  let current_key = t.current_key in
+  t.current_key <- None;
+  current_key
 
 module Testing = struct
   let init_no_keypresses () = { current_key = None; graphics_disabled = true }

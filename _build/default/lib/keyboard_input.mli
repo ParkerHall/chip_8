@@ -10,7 +10,9 @@ end
 type t
 
 val init : unit -> t
-val current_key : t -> Key.t option
+
+(* implements key-latching, where latest keypress is stored until instruction requests it *)
+val take_key : t -> Key.t option
 val loop_forever : t -> frequency:Time_ns.Span.t -> unit
 
 module Testing : sig
