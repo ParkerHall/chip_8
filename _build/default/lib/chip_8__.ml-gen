@@ -9,6 +9,9 @@ module Emulator = Chip_8__Emulator
 (** @canonical Chip_8.Hexstring_helpers *)
 module Hexstring_helpers = Chip_8__Hexstring_helpers
 
+(** @canonical Chip_8.Keyboard_input *)
+module Keyboard_input = Chip_8__Keyboard_input
+
 (** @canonical Chip_8.Memory *)
 module Memory = Chip_8__Memory
 

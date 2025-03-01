@@ -10,7 +10,7 @@ let%expect_test "dump IBM logo" =
     (HALTING
      (halt_reason
       ("Encountered infinite JUMP loop!" (opcode_program_counter 552)
-       (opcode (Jump (new_program_counter 552) (with_offset false))))))
+       (opcode (Jump (new_program_counter_base 552) (with_offset false))))))
 
 
 

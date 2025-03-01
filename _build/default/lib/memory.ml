@@ -4,6 +4,7 @@ open! Async
 module Constants = struct
   let empty_char = '\x00'
   let bytes_in_memory = 4096
+  let bytes_per_font_char = 5
   let program_start_location = 0x200
 end
 
@@ -89,6 +90,10 @@ let to_string_hum t =
 let read t ~loc = Bytes.get t loc |> int_of_char
 let read_hum t ~loc = read t ~loc |> Hexstring_helpers.format ~num_nibbles:2
 let write t ~loc value = Bytes.set t loc (char_of_int value)
+
+module Helpers = struct
+  let font_location ~hex_char = hex_char * Constants.bytes_per_font_char
+end
 
 module Testing = struct
   let load_program = load_program'

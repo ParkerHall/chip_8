@@ -1,1 +1,1 @@
-lib/emulator.pp.ml: Async Clock_ns Command Core Deferred Display Filename_unix Fn Int Let_syntax List Memory Opcode Ppx_bench_lib Ppx_expect_runtime Ppx_inline_test_lib Ppx_module_timer_runtime Ppx_sexp_conv_lib Registers Sexp Sexplib0 Stack Stdlib Time_ns Unix Writer
+lib/emulator.pp.ml: Async Clock_ns Command Core Deferred Display Filename_unix Fn Int Keyboard_input Let_syntax List Memory Opcode Option Ppx_bench_lib Ppx_expect_runtime Ppx_inline_test_lib Ppx_module_timer_runtime Ppx_sexp_conv_lib Random Registers Sexp Sexplib0 Stack Stdlib Time_ns Unix Writer

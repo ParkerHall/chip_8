@@ -3,29 +3,33 @@ open! Async
 
 module Constants = struct
   let bits_in_byte = 8
+  let max_8_bit_int = int_of_float (2. ** 8.) - 1
+  let timer_frequency = Time_ns.Span.of_sec (1. /. 60.)
 end
 
 module Options = struct
   type t = {
     detect_jump_self_loop : bool;
     disable_graphics : bool;
+    ignore_y_on_shift : bool;
+    increment_index_on_store_or_load : bool;
     jump_with_offset : [ `NNN | `XNN ];
+    keypress_frequency : Time_ns.Span.t;
   }
   [@@deriving sexp_of]
-
-  let default_for_testing =
-    {
-      detect_jump_self_loop = true;
-      disable_graphics = true;
-      jump_with_offset = `NNN;
-    }
 
   let default =
     {
       detect_jump_self_loop = false;
       disable_graphics = false;
+      ignore_y_on_shift = false;
+      increment_index_on_store_or_load = false;
       jump_with_offset = `NNN;
+      keypress_frequency = Constants.timer_frequency;
     }
+
+  let default_for_testing =
+    { default with detect_jump_self_loop = true; disable_graphics = true }
 
   let flag =
     let%map_open.Command detect_jump_self_loop =
@@ -33,12 +37,31 @@ module Options = struct
         ~doc:" if specified, halts upon encountering JUMP self-loop"
     and disable_graphics =
       flag "disable-graphics" no_arg ~doc:" if specified, disables X11 graphics"
+    and ignore_y_on_shift =
+      flag "ignore-y-on-shift" no_arg
+        ~doc:" if specified, shift X in place and ignore Y"
+    and increment_index_on_store_or_load =
+      flag "increment-index-on-store-or-load" no_arg
+        ~doc:
+          " if specified, increments the index register during store/load \
+           operations"
     and jump_with_offset =
       flag "super-chip-jump-with-offset" no_arg
         ~doc:" if specified, use SUPER-CHIP JUMP with offset semantics"
       >>| fun super_chip -> if super_chip then `XNN else `NNN
+    and keypress_frequency =
+      flag "keypress-frequency"
+        (optional_with_default Constants.timer_frequency Time_ns.Span.arg_type)
+        ~doc:"SPAN keypress frequency (defaults to 1/60s)"
     in
-    { detect_jump_self_loop; disable_graphics; jump_with_offset }
+    {
+      detect_jump_self_loop;
+      disable_graphics;
+      ignore_y_on_shift;
+      increment_index_on_store_or_load;
+      jump_with_offset;
+      keypress_frequency;
+    }
 end
 
 module State = struct
@@ -47,31 +70,35 @@ module State = struct
     display : (Display.t[@sexp.opaque]);
     halt_reason : Sexp.t option;
     index_register : int;
+    keyboard_input : (Keyboard_input.t[@sexp.opaque]);
     memory : Memory.t;
     options : Options.t;
     program_counter : int;
     registers : Registers.t;
-    _stack : int Stack.t;
+    stack : int Stack.t;
     mutable sound_timer : int;
   }
   [@@deriving sexp_of]
 
   let init ~(options : Options.t) =
-    let display =
+    let display, keyboard_input =
       match options.disable_graphics with
-      | true -> Display.Testing.init_no_graphics ()
-      | false -> Display.init ()
+      | true ->
+          ( Display.Testing.init_no_graphics (),
+            Keyboard_input.Testing.init_no_keypresses () )
+      | false -> (Display.init (), Keyboard_input.init ())
     in
     {
       delay_timer = 0;
       display;
       halt_reason = None;
       index_register = 0;
+      keyboard_input;
       memory = Memory.init ();
       options;
       program_counter = Memory.Constants.program_start_location;
       registers = Registers.init ();
-      _stack = Stack.create ();
+      stack = Stack.create ();
       sound_timer = 0;
     }
 
@@ -86,13 +113,22 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
       { state with index_register = state.index_register + to_add }
   | Add_to_register { index; to_add } ->
       let old_value = Registers.read_exn state.registers ~index in
-      let to_add =
+      let addend =
         match to_add with
         | Direct value -> value
         | Register index -> Registers.read_exn state.registers ~index
       in
-      let new_value = old_value + to_add in
-      let () = Registers.write_exn state.registers ~index new_value in
+      let new_value = old_value + addend in
+      let () =
+        match to_add with
+        | Direct _ -> ()
+        | Register _ -> (
+            match new_value > Constants.max_8_bit_int with
+            | true -> Registers.set_flag_register state.registers
+            | false -> Registers.unset_flag_register state.registers)
+      in
+      (* note that [Registers.write_exn] will handle overflow *)
+      Registers.write_exn state.registers ~index new_value;
       state
   | Binary_operation { x_index; y_index; operation } ->
       let x = Registers.read_exn state.registers ~index:x_index in
@@ -103,11 +139,20 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
         | `AND -> x land y
         | `XOR -> x lxor y
       in
-      let () = Registers.write_exn state.registers ~index:x_index new_value in
+      Registers.write_exn state.registers ~index:x_index new_value;
       state
   | Clear_screen ->
       let display = Display.clear state.display in
       { state with display }
+  | Decimal_conversion { index } ->
+      let number = Registers.read_exn state.registers ~index in
+      let hundreds = number / 100 in
+      let tens = number / 10 % 10 in
+      let ones = number % 10 in
+      Registers.write_exn state.registers ~index:state.index_register hundreds;
+      Registers.write_exn state.registers ~index:(state.index_register + 1) tens;
+      Registers.write_exn state.registers ~index:(state.index_register + 2) ones;
+      state
   | Draw { x_index; y_index; num_bytes } ->
       (* N.B. phall (2025-01-27): [x] coordinates are modulo'd _only_ at the beginning.
       The first coordinate always appears on screen, but future pixels that exceed the
@@ -117,6 +162,7 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
         % Display.Constants.pixel_width
       in
       let initial_y = Registers.read_exn state.registers ~index:y_index in
+      Registers.unset_flag_register state.registers;
       let display =
         List.init num_bytes ~f:Fn.id
         |> List.fold ~init:state.display ~f:(fun display dy ->
@@ -146,22 +192,32 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
                           new_display))
       in
       { state with display }
+  | Get_font_character { index } ->
+      (* registers store 16-bit ints but each font character is only 8 bits *)
+      let hex_char = Registers.read_exn state.registers ~index land 0x0F in
+      { state with index_register = Memory.Helpers.font_location ~hex_char }
+  | Get_key { index } -> (
+      match Keyboard_input.current_key state.keyboard_input with
+      | Some key ->
+          Registers.write_exn state.registers ~index
+            (Keyboard_input.Key.to_int key);
+          state
+      | None -> { state with program_counter = state.program_counter - 2 })
   | Halt ->
       let halt_reason = [%message "Decoded empty opcode (0x0000)!"] |> Some in
       { state with halt_reason }
-  | Jump { new_program_counter; with_offset } -> (
+  | Jump { new_program_counter_base; with_offset } -> (
       let new_program_counter =
         match with_offset with
-        | false -> new_program_counter
+        | false -> new_program_counter_base
         | true ->
             let index =
               match state.options.jump_with_offset with
-              | `XNN -> new_program_counter lsr 8
+              | `XNN -> new_program_counter_base lsr 8
               | `NNN -> 0
             in
-
             let from_register = Registers.read_exn state.registers ~index in
-            new_program_counter + from_register
+            new_program_counter_base + from_register
       in
       let opcode_program_counter = state.program_counter - 2 in
       match
@@ -178,6 +234,21 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
           in
           { state with halt_reason }
       | false -> { state with program_counter = new_program_counter })
+  | Load { up_to_index } -> (
+      List.init (up_to_index + 1) ~f:Fn.id
+      |> List.iter ~f:(fun index ->
+             let value =
+               Memory.read state.memory ~loc:(state.index_register + index)
+             in
+             Registers.write_exn state.registers ~index value);
+      match state.options.increment_index_on_store_or_load with
+      | true ->
+          { state with index_register = state.index_register + up_to_index + 1 }
+      | false -> state)
+  | Random { index; and_with } ->
+      let random = Random.int (Constants.max_8_bit_int + 1) in
+      Registers.write_exn state.registers ~index (random land and_with);
+      state
   | Set_index_register { value } -> { state with index_register = value }
   | Set_register { index; to_ } ->
       let value =
@@ -188,9 +259,93 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
         | Non_timer (Register index) ->
             Registers.read_exn state.registers ~index
       in
-      let () = Registers.write_exn state.registers ~index value in
+      Registers.write_exn state.registers ~index value;
       state
-  | _ -> raise_s [%message "unimplemented"]
+  | Set_timer { index; timer } -> (
+      let value = Registers.read_exn state.registers ~index in
+      match timer with
+      | Delay -> { state with delay_timer = value }
+      | Sound -> { state with sound_timer = value })
+  | Shift { x_index; y_index; direction } ->
+      let value =
+        match state.options.ignore_y_on_shift with
+        | true -> Registers.read_exn state.registers ~index:x_index
+        | false -> Registers.read_exn state.registers ~index:y_index
+      in
+      let shifted, flag_bit =
+        match direction with
+        | `left -> (value lsl 1, value land 0x80 = 0x80)
+        | `right -> (value lsr 1, value land 0x01 = 0x01)
+      in
+      Registers.write_exn state.registers ~index:x_index shifted;
+      let () =
+        match flag_bit with
+        | true -> Registers.set_flag_register state.registers
+        | false -> Registers.unset_flag_register state.registers
+      in
+      state
+  | Skip_if_key { index; skip_if } ->
+      let goal_key = Registers.read_exn state.registers ~index in
+      let equal =
+        Keyboard_input.current_key state.keyboard_input
+        |> Option.value_map ~default:false ~f:(fun key ->
+               Keyboard_input.Key.to_int key = goal_key)
+      in
+      let should_skip =
+        match skip_if with Equal -> equal | Not_equal -> not equal
+      in
+      let program_counter =
+        match should_skip with
+        | true -> state.program_counter + 2
+        | false -> state.program_counter
+      in
+      { state with program_counter }
+  | Skip_if_register { left_index; right; skip_if } ->
+      let left = Registers.read_exn state.registers ~index:left_index in
+      let right =
+        match right with
+        | Direct value -> value
+        | Register index -> Registers.read_exn state.registers ~index
+      in
+      let should_skip =
+        match skip_if with Equal -> ( = ) | Not_equal -> ( <> )
+      in
+      let program_counter =
+        match should_skip left right with
+        | true -> state.program_counter + 2
+        | false -> state.program_counter
+      in
+      { state with program_counter }
+  | Store { up_to_index } -> (
+      List.init (up_to_index + 1) ~f:Fn.id
+      |> List.iter ~f:(fun index ->
+             let value = Registers.read_exn state.registers ~index in
+             Memory.write state.memory ~loc:(state.index_register + index) value);
+      match state.options.increment_index_on_store_or_load with
+      | true ->
+          { state with index_register = state.index_register + up_to_index + 1 }
+      | false -> state)
+  | Subroutine_end ->
+      let program_counter = Stack.pop_exn state.stack in
+      { state with program_counter }
+  | Subroutine_start { memory_location } ->
+      Stack.push state.stack state.program_counter;
+      { state with program_counter = memory_location }
+  | Subtract { x_index; y_index; set_x_to } ->
+      let x = Registers.read_exn state.registers ~index:x_index in
+      let y = Registers.read_exn state.registers ~index:y_index in
+      let diff, set_flag =
+        match set_x_to with
+        | `x_minus_y -> (x - y, x >= y)
+        | `y_minus_x -> (y - x, y >= x)
+      in
+      Registers.write_exn state.registers ~index:x_index diff;
+      let () =
+        match set_flag with
+        | true -> Registers.set_flag_register state.registers
+        | false -> Registers.unset_flag_register state.registers
+      in
+      state
 
 let handle_opcode state ~opcode:raw_opcode =
   let opcode = Opcode.decode_exn raw_opcode in
@@ -215,10 +370,11 @@ let run ~options ~program_file =
         { state with program_counter = state.program_counter + 2 }
         |> handle_opcode ~opcode |> loop
   in
+  (* keyboard loop *)
+  Keyboard_input.loop_forever state.keyboard_input
+    ~frequency:state.options.keypress_frequency;
   (* timer loop *)
-  Clock_ns.every
-    (Time_ns.Span.of_sec (1. /. 60.))
-    (fun () ->
+  Clock_ns.every Constants.timer_frequency (fun () ->
       state.delay_timer <- Int.max 0 (state.delay_timer - 1);
       state.sound_timer <- Int.max 0 (state.sound_timer - 1));
   loop state
@@ -227,7 +383,6 @@ module Testing = struct
   module Constants = struct
     include Constants
 
-    let bytes_per_char = 5
     let num_hex_chars = 16
   end
 
@@ -239,11 +394,12 @@ module Testing = struct
     in
     List.init Constants.num_hex_chars ~f:Fn.id
     |> List.concat_map ~f:(fun i ->
-           let font_location = i * Constants.bytes_per_char in
+           let font_location = Memory.Helpers.font_location ~hex_char:i in
            let x = start_x + (i * Constants.bits_in_byte) + 1 in
            let y =
              start_y
-             + (i / display_hexchar_width * (Constants.bytes_per_char + 1))
+             + i / display_hexchar_width
+               * (Memory.Constants.bytes_per_font_char + 1)
            in
            [
              Opcode.Set_index_register { value = font_location };
@@ -253,7 +409,7 @@ module Testing = struct
                {
                  x_index = 0;
                  y_index = 1;
-                 num_bytes = Constants.bytes_per_char;
+                 num_bytes = Memory.Constants.bytes_per_font_char;
                };
            ])
 
@@ -272,9 +428,7 @@ module Testing = struct
               Writer.write_byte writer (binary land 0xFF);
               Deferred.unit))
     in
-    let%bind state =
-      run ~options:Options.default_for_testing ~program_file:tmp_filename
-    in
+    let%bind state = run ~options:Options.default ~program_file:tmp_filename in
     let%bind () = Unix.remove tmp_filename in
     return state
 
@@ -284,7 +438,9 @@ module Testing = struct
       | `manual_step -> manually_step_opcodes opcodes
       | `load_and_run -> load_and_run_emulator opcodes
     in
-    Display.freeze state.display
+    match state.options.disable_graphics with
+    | true -> Display.Testing.dump_to_stdout state.display
+    | false -> Display.freeze state.display
 
   let display_font ~how = run_test ~how display_font_opcodes
   let run = run ~options:Options.default_for_testing

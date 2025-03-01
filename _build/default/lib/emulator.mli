@@ -5,7 +5,10 @@ module Options : sig
   type t = {
     detect_jump_self_loop : bool;
     disable_graphics : bool;
+    ignore_y_on_shift : bool;
+    increment_index_on_store_or_load : bool;
     jump_with_offset : [ `NNN | `XNN ];
+    keypress_frequency : Time_ns.Span.t;
   }
 
   val default : t

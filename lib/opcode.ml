@@ -34,19 +34,19 @@ type t =
   | Get_font_character of { index : int }
   | Get_key of { index : int }
   | Halt (* not a real opcode, but helpful for testing *)
-  | Jump of { new_program_counter : int; with_offset : bool }
+  | Jump of { new_program_counter_base : int; with_offset : bool }
   | Load of { up_to_index : int }
   | Random of { index : int; and_with : int }
   | Set_index_register of { value : int }
   | Set_register of { index : int; to_ : Value_source.t }
   | Set_timer of { index : int; timer : Timer.t }
   | Shift of { x_index : int; y_index : int; direction : [ `left | `right ] }
+  | Skip_if_key of { index : int; skip_if : Skip_if.t }
   | Skip_if_register of {
       left_index : int;
       right : Value_source.Non_timer.t;
       skip_if : Skip_if.t;
     }
-  | Skip_if_key of { index : int; skip_if : Skip_if.t }
   | Store of { up_to_index : int }
   | Subroutine_end
   | Subroutine_start of { memory_location : int }
@@ -76,9 +76,9 @@ let encode_exn = function
   | Get_font_character { index } -> combine_nibbles [ 0xF; index; 0x2; 0x9 ]
   | Get_key { index } -> combine_nibbles [ 0xF; index; 0x0; 0xA ]
   | Halt -> 0x0000
-  | Jump { new_program_counter; with_offset } ->
+  | Jump { new_program_counter_base; with_offset } ->
       let n1 = if with_offset then 0xB else 0x1 in
-      (n1 lsl 12) lor new_program_counter
+      (n1 lsl 12) lor new_program_counter_base
   | Load { up_to_index } -> combine_nibbles [ 0xF; up_to_index; 0x6; 0x5 ]
   | Random { index; and_with } -> 0xC000 lor (index lsl 8) lor and_with
   | Set_index_register { value } -> 0xA000 lor value
@@ -135,8 +135,8 @@ let decode_exn opcode =
   | 0x0, 0x0, 0xE, 0x0 -> Clear_screen
   | 0x0, 0x0, 0xE, 0xE -> Subroutine_end
   | 0x1, n1, n2, n3 ->
-      let new_program_counter = combine_nibbles [ n1; n2; n3 ] in
-      Jump { new_program_counter; with_offset = false }
+      let new_program_counter_base = combine_nibbles [ n1; n2; n3 ] in
+      Jump { new_program_counter_base; with_offset = false }
   | 0x2, n1, n2, n3 ->
       let memory_location = combine_nibbles [ n1; n2; n3 ] in
       Subroutine_start { memory_location }
@@ -178,8 +178,8 @@ let decode_exn opcode =
       let value = combine_nibbles [ n1; n2; n3 ] in
       Set_index_register { value }
   | 0xB, n1, n2, n3 ->
-      let new_program_counter = combine_nibbles [ n1; n2; n3 ] in
-      Jump { new_program_counter; with_offset = true }
+      let new_program_counter_base = combine_nibbles [ n1; n2; n3 ] in
+      Jump { new_program_counter_base; with_offset = true }
   | 0xC, index, n1, n2 ->
       let and_with = combine_nibbles [ n1; n2 ] in
       Random { index; and_with }

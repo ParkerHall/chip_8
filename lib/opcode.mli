@@ -30,19 +30,19 @@ type t =
   | Get_font_character of { index : int }
   | Get_key of { index : int }
   | Halt (* not a real opcode, but helpful for testing *)
-  | Jump of { new_program_counter : int; with_offset : bool }
+  | Jump of { new_program_counter_base : int; with_offset : bool }
   | Load of { up_to_index : int }
   | Random of { index : int; and_with : int }
   | Set_index_register of { value : int }
   | Set_register of { index : int; to_ : Value_source.t }
   | Set_timer of { index : int; timer : Timer.t }
   | Shift of { x_index : int; y_index : int; direction : [ `left | `right ] }
+  | Skip_if_key of { index : int; skip_if : Skip_if.t }
   | Skip_if_register of {
       left_index : int;
       right : Value_source.Non_timer.t;
       skip_if : Skip_if.t;
     }
-  | Skip_if_key of { index : int; skip_if : Skip_if.t }
   | Store of { up_to_index : int }
   | Subroutine_end
   | Subroutine_start of { memory_location : int }
