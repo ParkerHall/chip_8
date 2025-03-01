@@ -3,8 +3,13 @@ open! Async
 
 module Constants = struct
   let bits_in_byte = 8
+  let keypress_frequency = Time_ns.Span.of_ms 1.
+  let opcode_frequency = Time_ns.Span.of_sec (1. /. 360.)
   let max_8_bit_int = int_of_float (2. ** 8.) - 1
   let timer_frequency = Time_ns.Span.of_sec (1. /. 60.)
+
+  let decrement_timers_every_nth_opcode =
+    Time_ns.Span.div timer_frequency opcode_frequency |> Int63.to_int_exn
 end
 
 module Options = struct
@@ -25,7 +30,7 @@ module Options = struct
       ignore_y_on_shift = false;
       increment_index_on_store_or_load = false;
       jump_with_offset = `NNN;
-      keypress_frequency = Constants.timer_frequency;
+      keypress_frequency = Constants.keypress_frequency;
     }
 
   let default_for_testing =
@@ -66,17 +71,17 @@ end
 
 module State = struct
   type t = {
-    mutable delay_timer : int;
+    delay_timer : int;
     display : (Display.t[@sexp.opaque]);
     halt_reason : Sexp.t option;
-    index_register : int;
+    index_register : int; (* 16-bits *)
     keyboard_input : (Keyboard_input.t[@sexp.opaque]);
-    memory : Memory.t;
+    memory : (Memory.t[@sexp.opaque]);
     options : Options.t;
     program_counter : int;
     registers : Registers.t;
-    stack : int Stack.t;
-    mutable sound_timer : int;
+    stack : int Stack.t; (* 16-bits *)
+    sound_timer : int;
   }
   [@@deriving sexp_of]
 
@@ -104,13 +109,25 @@ module State = struct
 
   let load_program t ~program_file = Memory.load_program t.memory ~program_file
   let display t = t.display
+
+  let decrement_timers t =
+    let decr value = Int.max 0 (value - 1) in
+    {
+      t with
+      delay_timer = decr t.delay_timer;
+      sound_timer = decr t.sound_timer;
+    }
 end
 
 let handle_opcode' (state : State.t) (opcode : Opcode.t) =
   match opcode with
   | Add_to_index_register { index } ->
       let to_add = Registers.read_exn state.registers ~index in
-      { state with index_register = state.index_register + to_add }
+      (* index register is 16-bits *)
+      {
+        state with
+        index_register = (state.index_register + to_add) land 0xFFFF;
+      }
   | Add_to_register { index; to_add } ->
       let old_value = Registers.read_exn state.registers ~index in
       let addend =
@@ -149,9 +166,9 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
       let hundreds = number / 100 in
       let tens = number / 10 % 10 in
       let ones = number % 10 in
-      Registers.write_exn state.registers ~index:state.index_register hundreds;
-      Registers.write_exn state.registers ~index:(state.index_register + 1) tens;
-      Registers.write_exn state.registers ~index:(state.index_register + 2) ones;
+      Memory.write state.memory ~loc:state.index_register hundreds;
+      Memory.write state.memory ~loc:(state.index_register + 1) tens;
+      Memory.write state.memory ~loc:(state.index_register + 2) ones;
       state
   | Draw { x_index; y_index; num_bytes } ->
       (* N.B. phall (2025-01-27): [x] coordinates are modulo'd _only_ at the beginning.
@@ -243,13 +260,18 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
              Registers.write_exn state.registers ~index value);
       match state.options.increment_index_on_store_or_load with
       | true ->
-          { state with index_register = state.index_register + up_to_index + 1 }
+          {
+            state with
+            index_register =
+              (state.index_register + up_to_index + 1) land 0xFFFF;
+          }
       | false -> state)
   | Random { index; and_with } ->
       let random = Random.int (Constants.max_8_bit_int + 1) in
       Registers.write_exn state.registers ~index (random land and_with);
       state
-  | Set_index_register { value } -> { state with index_register = value }
+  | Set_index_register { value } ->
+      { state with index_register = value land 0xFFFF }
   | Set_register { index; to_ } ->
       let value =
         match to_ with
@@ -323,10 +345,15 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
              Memory.write state.memory ~loc:(state.index_register + index) value);
       match state.options.increment_index_on_store_or_load with
       | true ->
-          { state with index_register = state.index_register + up_to_index + 1 }
+          {
+            state with
+            index_register =
+              (state.index_register + up_to_index + 1) land 0xFFFF;
+          }
       | false -> state)
   | Subroutine_end ->
-      let program_counter = Stack.pop_exn state.stack in
+      (* memory addresses on the stack are 16-bits *)
+      let program_counter = Stack.pop_exn state.stack land 0xFFFF in
       { state with program_counter }
   | Subroutine_start { memory_location } ->
       Stack.push state.stack state.program_counter;
@@ -358,26 +385,28 @@ let fetch (state : State.t) =
 
 let run ~options ~program_file =
   let state = State.init ~options in
-  let%map () = State.load_program state ~program_file in
+  let%bind () = State.load_program state ~program_file in
   (* main fetch, decode, execute loop *)
-  let rec loop (state : State.t) =
+  let rec loop i (state : State.t) =
+    let%bind () = Clock_ns.after Constants.opcode_frequency in
+    let state, new_i =
+      match i % Constants.decrement_timers_every_nth_opcode with
+      | 0 -> (State.decrement_timers state, 0)
+      | _ -> (state, i + 1)
+    in
     match state.halt_reason with
     | Some halt_reason ->
         print_s [%message "HALTING" (halt_reason : Sexp.t)];
-        state
+        return state
     | None ->
         let opcode = fetch state in
         { state with program_counter = state.program_counter + 2 }
-        |> handle_opcode ~opcode |> loop
+        |> handle_opcode ~opcode |> loop new_i
   in
   (* keyboard loop *)
   Keyboard_input.loop_forever state.keyboard_input
     ~frequency:state.options.keypress_frequency;
-  (* timer loop *)
-  Clock_ns.every Constants.timer_frequency (fun () ->
-      state.delay_timer <- Int.max 0 (state.delay_timer - 1);
-      state.sound_timer <- Int.max 0 (state.sound_timer - 1));
-  loop state
+  loop 0 state
 
 module Testing = struct
   module Constants = struct

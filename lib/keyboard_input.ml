@@ -3,7 +3,7 @@ open! Async
 
 module Key = struct
   type t = N1 | N2 | N3 | N4 | Q | W | E | R | A | S | D | F | Z | X | C | V
-  [@@deriving sexp_of]
+  [@@deriving equal, sexp_of]
 
   let mapping =
     [

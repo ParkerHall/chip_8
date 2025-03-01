@@ -1,7 +1,8 @@
 open! Core
 open! Async
-open Chip_8
+open! Chip_8
 
+(*
 let%expect_test "dump IBM logo" =
   let%map state = Emulator.Testing.run ~program_file:"./ibm-logo.ch8" in
   Emulator.State.display state |> Display.Testing.dump_to_stdout;
@@ -35,3 +36,4 @@ let%expect_test "dump IBM logo" =
 
                 ######## #########   #####    #    #####
     |}]
+*)

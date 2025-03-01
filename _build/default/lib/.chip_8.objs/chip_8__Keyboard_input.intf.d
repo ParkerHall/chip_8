@@ -1,1 +1,1 @@
-lib/keyboard_input.pp.mli: Core Sexplib0 Time_ns
+lib/keyboard_input.pp.mli: Core Ppx_compare_lib Sexplib0 Time_ns
