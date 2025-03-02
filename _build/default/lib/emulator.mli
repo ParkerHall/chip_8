@@ -9,6 +9,7 @@ module Options : sig
     increment_index_on_store_or_load : bool;
     jump_with_offset : [ `NNN | `XNN ];
     keypress_frequency : Time_ns.Span.t;
+    repeat_keypress_for_n_cycles : int;
   }
 
   val default : t

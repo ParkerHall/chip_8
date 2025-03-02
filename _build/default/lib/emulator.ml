@@ -3,9 +3,10 @@ open! Async
 
 module Constants = struct
   let bits_in_byte = 8
-  let keypress_frequency = Time_ns.Span.of_ns 1.
-  let opcode_frequency = Time_ns.Span.of_sec (1. /. 180.)
+  let keypress_frequency = Time_ns.Span.of_sec (1. /. 60.)
+  let opcode_frequency = Time_ns.Span.of_sec (1. /. 480.)
   let max_8_bit_int = int_of_float (2. ** 8.) - 1
+  let repeat_keypress_for_n_cycles = 5
   let timer_frequency = Time_ns.Span.of_sec (1. /. 60.)
 
   let decrement_timers_every_nth_opcode =
@@ -20,6 +21,7 @@ module Options = struct
     increment_index_on_store_or_load : bool;
     jump_with_offset : [ `NNN | `XNN ];
     keypress_frequency : Time_ns.Span.t;
+    repeat_keypress_for_n_cycles : int;
   }
   [@@deriving sexp_of]
 
@@ -31,6 +33,7 @@ module Options = struct
       increment_index_on_store_or_load = false;
       jump_with_offset = `NNN;
       keypress_frequency = Constants.keypress_frequency;
+      repeat_keypress_for_n_cycles = Constants.repeat_keypress_for_n_cycles;
     }
 
   let default_for_testing =
@@ -58,6 +61,10 @@ module Options = struct
       flag "keypress-frequency"
         (optional_with_default Constants.timer_frequency Time_ns.Span.arg_type)
         ~doc:"SPAN keypress frequency (defaults to 1/60s)"
+    and repeat_keypress_for_n_cycles =
+      flag "repeat-keypress-for-n-cycles"
+        (optional_with_default Constants.repeat_keypress_for_n_cycles int)
+        ~doc:"INT repeat keypress for n input cycles (defaults to 5)"
     in
     {
       detect_jump_self_loop;
@@ -66,6 +73,7 @@ module Options = struct
       increment_index_on_store_or_load;
       jump_with_offset;
       keypress_frequency;
+      repeat_keypress_for_n_cycles;
     }
 end
 
@@ -91,7 +99,15 @@ module State = struct
       | true ->
           ( Display.Testing.init_no_graphics (),
             Keyboard_input.Testing.init_no_keypresses () )
-      | false -> (Display.init (), Keyboard_input.init ())
+      | false ->
+          let keyboard_options =
+            {
+              Keyboard_input.Options.frequency = options.keypress_frequency;
+              repeat_keypress_for_n_cycles =
+                options.repeat_keypress_for_n_cycles;
+            }
+          in
+          (Display.init (), Keyboard_input.init keyboard_options)
     in
     {
       delay_timer = 0;
@@ -214,7 +230,7 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
       let hex_char = Registers.read_exn state.registers ~index land 0x0F in
       { state with index_register = Memory.Helpers.font_location ~hex_char }
   | Get_key { index } -> (
-      match Keyboard_input.take_key state.keyboard_input with
+      match Keyboard_input.current_key state.keyboard_input with
       | Some key ->
           Registers.write_exn state.registers ~index
             (Keyboard_input.Key.to_int key);
@@ -308,9 +324,8 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
       state
   | Skip_if_key { index; skip_if } ->
       let goal_key = Registers.read_exn state.registers ~index in
-      print_s [%message (goal_key : int)];
       let equal =
-        Keyboard_input.take_key state.keyboard_input
+        Keyboard_input.current_key state.keyboard_input
         |> Option.value_map ~default:false ~f:(fun key ->
                Keyboard_input.Key.to_int key = goal_key)
       in
@@ -405,8 +420,7 @@ let run ~options ~program_file =
         |> handle_opcode ~opcode |> loop new_i
   in
   (* keyboard loop *)
-  Keyboard_input.loop_forever state.keyboard_input
-    ~frequency:state.options.keypress_frequency;
+  Keyboard_input.loop_forever state.keyboard_input;
   loop 0 state
 
 module Testing = struct

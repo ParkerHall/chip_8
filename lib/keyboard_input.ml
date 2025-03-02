@@ -51,25 +51,67 @@ module Key = struct
     | V -> 0xF
 end
 
-type t = { mutable current_key : Key.t option; graphics_disabled : bool }
+module Keypress = struct
+  type t = { key : Key.t; cycles_remaining : int }
 
-let init () = { current_key = None; graphics_disabled = false }
+  let step { key; cycles_remaining } =
+    match cycles_remaining > 0 with
+    | true -> Some { key; cycles_remaining = cycles_remaining - 1 }
+    | false -> None
+end
 
-let loop_forever t ~frequency =
+module Options = struct
+  type t = { frequency : Time_ns.Span.t; repeat_keypress_for_n_cycles : int }
+end
+
+type t = {
+  mutable current_keypress : Keypress.t option;
+  frequency : Time_ns.Span.t;
+  graphics_disabled : bool;
+  repeat_keypress_for_n_cycles : int;
+}
+
+let init { Options.frequency; repeat_keypress_for_n_cycles } =
+  {
+    current_keypress = None;
+    frequency;
+    graphics_disabled = false;
+    repeat_keypress_for_n_cycles;
+  }
+
+let loop_forever t =
   match t.graphics_disabled with
   | true -> ()
   | false ->
-      Clock_ns.every frequency (fun () ->
-          print_s [%message (t.current_key : Key.t option)];
+      Clock_ns.every t.frequency (fun () ->
           match Graphics.key_pressed () with
-          | true -> t.current_key <- Key.of_char (Graphics.read_key ())
-          | false -> ())
+          | true ->
+              let keypress =
+                let%map.Option key = Graphics.read_key () |> Key.of_char in
+                {
+                  Keypress.key;
+                  cycles_remaining = t.repeat_keypress_for_n_cycles;
+                }
+              in
+              t.current_keypress <- keypress
+          | false ->
+              let new_keypress =
+                let%bind.Option old_keypress = t.current_keypress in
+                Keypress.step old_keypress
+              in
+              t.current_keypress <- new_keypress)
 
-let take_key t =
-  let current_key = t.current_key in
-  t.current_key <- None;
-  current_key
+let current_key t =
+  let%map.Option { Keypress.key; _ } = t.current_keypress in
+  key
 
 module Testing = struct
-  let init_no_keypresses () = { current_key = None; graphics_disabled = true }
+  (* [current_keypress], [frequency], [repeat_keypress_for_n_cycles] unused for testing *)
+  let init_no_keypresses () =
+    {
+      current_keypress = None;
+      frequency = Time_ns.Span.max_value_representable;
+      graphics_disabled = true;
+      repeat_keypress_for_n_cycles = 0;
+    }
 end
