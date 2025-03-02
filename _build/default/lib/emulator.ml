@@ -37,7 +37,13 @@ module Options = struct
     }
 
   let default_for_testing =
-    { default with detect_jump_self_loop = true; disable_graphics = true }
+    {
+      default with
+      detect_jump_self_loop = true;
+      disable_graphics = true;
+      (* required to pass BC test *)
+      ignore_y_on_shift = true;
+    }
 
   let flag =
     let%map_open.Command detect_jump_self_loop =
