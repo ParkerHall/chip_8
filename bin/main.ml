@@ -44,23 +44,8 @@ let run_cmd =
          [%message
            "Loaded program unexpectedly finished" (program_file : string)])
 
-let foo_cmd =
-  Command.async ~summary:"FOO"
-    (let%map_open.Command () = return () in
-     fun () ->
-       let (_ : Display.t) = Display.init () in
-       Clock_ns.every
-         (Time_ns.Span.of_sec (1. /. 60.))
-         (fun () ->
-           let key = ref None in
-           while Graphics.key_pressed () do
-             key := Some (Graphics.read_key ())
-           done;
-           print_s [%message (!key : char option)]);
-       Deferred.never ())
-
 let command =
   Command.group ~summary:"chip-8 emulator"
-    [ ("run", run_cmd); ("test", testing_cmd); ("foo", foo_cmd) ]
+    [ ("run", run_cmd); ("test", testing_cmd) ]
 
 let () = Command_unix.run command

@@ -1,5 +1,6 @@
 open! Core
 open! Async
+open! Import
 
 module Constants = struct
   let bits_in_byte = 8

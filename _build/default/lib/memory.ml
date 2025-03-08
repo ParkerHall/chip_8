@@ -1,5 +1,6 @@
 open! Core
 open! Async
+open! Import
 
 module Constants = struct
   let empty_char = '\x00'

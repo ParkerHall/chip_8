@@ -27,5 +27,9 @@ val run : options:Options.t -> program_file:string -> State.t Deferred.t
 module Testing : sig
   (* runs with graphics disabled and JUMP self-loop halting *)
   val run : program_file:string -> State.t Deferred.t
+
+  (* [`manual_step] folds over opcodes without fully running emulator
+     [`load_and_run] writes opcodes to [program_file] and then calls [run ~options:Options.default ~program_file]
+   *)
   val display_font : how:[ `manual_step | `load_and_run ] -> unit Deferred.t
 end
