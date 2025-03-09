@@ -1,0 +1,5 @@
+(library
+ (name chip_8_games)
+ (libraries chip_8_base core)
+ (preprocess
+  (pps ppx_inline_test ppx_jane)))

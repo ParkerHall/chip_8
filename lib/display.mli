@@ -1,9 +1,5 @@
 open! Core
 
-module Constants : sig
-  val pixel_width : int
-end
-
 module Location : sig
   type t
 

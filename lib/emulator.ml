@@ -3,7 +3,8 @@ open! Async
 open! Import
 
 module Constants = struct
-  let bits_in_byte = 8
+  include Constants
+
   let keypress_frequency = Time_ns.Span.of_sec (1. /. 60.)
   let opcode_frequency = Time_ns.Span.of_sec (1. /. 480.)
   let max_8_bit_int = int_of_float (2. ** 8.) - 1
@@ -199,7 +200,7 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
       display boundary do not wrap. *)
       let initial_x =
         Registers.read_exn state.registers ~index:x_index
-        % Display.Constants.pixel_width
+        % Constants.display_pixel_width
       in
       let initial_y = Registers.read_exn state.registers ~index:y_index in
       Registers.unset_flag_register state.registers;
@@ -441,7 +442,7 @@ module Testing = struct
     let start_x = 0 in
     let start_y = 0 in
     let display_hexchar_width =
-      Display.Constants.pixel_width / Constants.bits_in_byte
+      Constants.display_pixel_width / Constants.bits_in_byte
     in
     List.init Constants.num_hex_chars ~f:Fn.id
     |> List.concat_map ~f:(fun i ->
@@ -494,5 +495,6 @@ module Testing = struct
     | false -> Display.freeze state.display
 
   let display_font ~how = run_test ~how display_font_opcodes
+  let display_snake_title ~how = run_test ~how Chip_8_games.Snake.opcodes
   let run = run ~options:Options.default_for_testing
 end

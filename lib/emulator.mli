@@ -32,4 +32,7 @@ module Testing : sig
      [`load_and_run] writes opcodes to [program_file] and then calls [run ~options:Options.default ~program_file]
    *)
   val display_font : how:[ `manual_step | `load_and_run ] -> unit Deferred.t
+
+  val display_snake_title :
+    how:[ `manual_step | `load_and_run ] -> unit Deferred.t
 end

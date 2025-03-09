@@ -28,6 +28,7 @@ let testing_cmd =
        let test =
          match String.lowercase test_name with
          | "display-font" -> Emulator.Testing.display_font
+         | "display-snake-title" -> Emulator.Testing.display_snake_title
          | _ -> raise_s [%message "Unknown test name" (test_name : string)]
        in
        test ~how)

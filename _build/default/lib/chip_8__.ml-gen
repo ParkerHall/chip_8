@@ -18,8 +18,5 @@ module Memory = Chip_8__Memory
 (** @canonical Chip_8.Registers *)
 module Registers = Chip_8__Registers
 
-(** @canonical Chip_8.Snake *)
-module Snake = Chip_8__Snake
-
 module Chip_8__ = struct end
 [@@deprecated "this module is shadowed"]

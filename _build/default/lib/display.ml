@@ -1,9 +1,10 @@
 open! Core
+open! Import
 
 module Constants = struct
   let pixel_size = 10
-  let pixel_width = 64
-  let pixel_height = 32
+  let pixel_width = Constants.display_pixel_width
+  let pixel_height = Constants.display_pixel_height
   let width = pixel_width * pixel_size
   let height = pixel_height * pixel_size
 end
