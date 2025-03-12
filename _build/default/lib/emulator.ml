@@ -125,7 +125,7 @@ module State = struct
       keyboard_input;
       memory = Memory.init ();
       options;
-      program_counter = Memory.Constants.program_start_location;
+      program_counter = Constants.program_start_memory_location;
       registers = Registers.init ();
       stack = Stack.create ();
       sound_timer = 0;

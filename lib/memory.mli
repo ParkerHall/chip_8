@@ -3,7 +3,6 @@ open! Async
 
 module Constants : sig
   val bytes_per_font_char : int
-  val program_start_location : int
 end
 
 type t [@@deriving sexp_of]

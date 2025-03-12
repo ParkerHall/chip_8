@@ -6,7 +6,7 @@ module Constants = struct
   let empty_char = '\x00'
   let bytes_in_memory = 4096
   let bytes_per_font_char = 5
-  let program_start_location = 0x200
+  let program_start_location = Constants.program_start_memory_location
 end
 
 type t = Bytes.t [@@deriving sexp_of]
