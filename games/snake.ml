@@ -8,8 +8,10 @@ module Constants = struct
   let scratch_bytes_for_draw = 8
   let snake_sprite = [ 0xF0; 0xF0; 0xF0; 0xF0 ]
   let snake_start_direction = `Right
-  let snake_start_x = 32
-  let snake_start_y = 16
+
+  (* roughly middle of the screen, skewing slightly up and to the left *)
+  let snake_start_x = 28
+  let snake_start_y = 12
 end
 
 (* The state layout is:
