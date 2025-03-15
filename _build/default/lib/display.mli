@@ -1,10 +1,6 @@
 open! Core
-
-module Location : sig
-  type t
-
-  val create : x:int -> y:int -> t
-end
+open! Import
+module Location : module type of Display_location
 
 type t
 

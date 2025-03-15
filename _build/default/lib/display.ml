@@ -9,20 +9,7 @@ module Constants = struct
   let height = pixel_height * pixel_size
 end
 
-module Location = struct
-  module T = struct
-    type t = { x : int; y : int } [@@deriving compare, sexp]
-
-    (* N.B. phall (2025-01-27): By convention, the chip-8 display places
-    the origin at the top-left corner of the screen. The OCaml [Graphics]
-    module uses the bottom-left corner as the origin, so we must flip the
-    [y] value. *)
-    let create ~x ~y = { x; y = Constants.pixel_height - y - 1 }
-  end
-
-  include T
-  include Comparable.Make (T)
-end
+module Location = Display_location
 
 type t = {
   max_x : int;
@@ -53,13 +40,13 @@ let fill_pixel ~x ~y ~color () =
   Graphics.fill_rect (x * Constants.pixel_size) (y * Constants.pixel_size)
     Constants.pixel_size Constants.pixel_size
 
-let set t ~x ~y =
+let set t ({ Location.x; y } as loc) =
   maybe_do_graphics t ~f:(fill_pixel ~x ~y ~color:Graphics.black);
-  { t with set = Set.add t.set { Location.x; y } }
+  { t with set = Set.add t.set loc }
 
-let unset t ~x ~y =
+let unset t ({ Location.x; y } as loc) =
   maybe_do_graphics t ~f:(fill_pixel ~x ~y ~color:Graphics.white);
-  { t with set = Set.remove t.set { Location.x; y } }
+  { t with set = Set.remove t.set loc }
 
 let is_set t location = Set.mem t.set location
 
@@ -68,8 +55,8 @@ let flip t ({ Location.x; y } as loc) =
   | true -> (t, `Out_of_bounds)
   | false -> (
       match is_set t loc with
-      | true -> (unset t ~x ~y, `Unset)
-      | false -> (set t ~x ~y, `Set))
+      | true -> (unset t loc, `Unset)
+      | false -> (set t loc, `Set))
 
 let clear t =
   maybe_do_graphics t ~f:Graphics.clear_graph;

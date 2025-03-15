@@ -1,1 +1,1 @@
-games/snake.pp.ml: Constants Core Import List Opcode Ppx_bench_lib Ppx_expect_runtime Ppx_inline_test_lib Ppx_module_timer_runtime Stdlib Variantslib
+games/snake.pp.ml: Constants Core Expect_test_config Import Inline_test_config Int List Opcode Ppx_bench_lib Ppx_expect_runtime Ppx_inline_test_lib Ppx_module_timer_runtime Ppx_sexp_conv_lib Stdlib Variantslib

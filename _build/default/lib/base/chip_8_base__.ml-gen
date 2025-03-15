@@ -3,6 +3,9 @@
 (** @canonical Chip_8_base.Constants *)
 module Constants = Chip_8_base__Constants
 
+(** @canonical Chip_8_base.Display_location *)
+module Display_location = Chip_8_base__Display_location
+
 (** @canonical Chip_8_base.Hexstring_helpers *)
 module Hexstring_helpers = Chip_8_base__Hexstring_helpers
 
