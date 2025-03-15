@@ -495,10 +495,6 @@ module Testing = struct
     | false -> Display.freeze state.display
 
   let display_font ~how = run_test ~how display_font_opcodes
-
-  let display_snake_title ~how =
-    print_s [%message (Chip_8_games.Snake.opcodes : Opcode.t list)];
-    run_test ~how Chip_8_games.Snake.opcodes
-
+  let display_snake_title ~how = run_test ~how Chip_8_games.Snake.opcodes
   let run = run ~options:Options.default_for_testing
 end
