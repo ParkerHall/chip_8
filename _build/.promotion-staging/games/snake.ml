@@ -6,9 +6,12 @@ module Constants = struct
 
   let bytes_per_opcode = 2
   let scratch_bytes_for_draw = 8
+  let snake_sprite = [ 0xF0; 0xF0; 0xF0; 0xF0 ]
   let snake_start_direction = `Right
-  let snake_start_x = 32
-  let snake_start_y = 16
+
+  (* roughly middle of the screen, skewing slightly up and to the left *)
+  let snake_start_x = 28
+  let snake_start_y = 12
 end
 
 (* The state layout is:
@@ -21,19 +24,13 @@ module State = struct
   module Value = struct
     type t = { offset : int; length : int } [@@deriving fields ~getters]
 
-    let x_diff = { offset = 0; length = 1 }
-    let y_diff = { offset = 1; length = 1 }
-    let byte_diff = { offset = 2; length = 8 }
-    let head_x = { offset = 10; length = 1 }
-    let head_y = { offset = 11; length = 5 }
+    let direction = { offset = 0; length = 1 }
+    let head_x = { offset = 1; length = 1 }
+    let head_y = { offset = 2; length = 1 }
   end
 
-  let layout = Value.[ x_diff; y_diff; byte_diff; head_x; head_y ]
+  let layout = Value.[ direction; head_x; head_y ]
   let total_bytes = List.sum (module Int) layout ~f:Value.length
-
-  let%expect_test "[total_bytes]" =
-    print_s [%message (total_bytes : int)];
-    [%expect {| (total_bytes 16) |}]
 
   let%test "[offset] and [length] are correct" =
     let total_length =
@@ -43,6 +40,10 @@ module State = struct
           expected_offset + length)
     in
     total_length = total_bytes
+
+  let%expect_test "[total_bytes]" =
+    print_s [%message (total_bytes : int)];
+    [%expect {| (total_bytes 3) |}]
 end
 
 module Helpers = struct
@@ -64,8 +65,8 @@ module Opcode_plus = struct
   type t =
     | Complete of Opcode.t
     | Jump of { relative_to_self : int }
-    | Set_index_register_to_draw_region
-    | Set_index_register_to_state_region
+    | Set_index_register_to_draw_region of { offset : int }
+    | Set_index_register_to_state_region of { offset : int }
   [@@deriving variants]
 
   let finalize ts =
@@ -91,10 +92,10 @@ module Opcode_plus = struct
                 new_program_counter_base = program_counter + relative_to_self;
                 with_offset = false;
               }
-        | Set_index_register_to_draw_region ->
-            Set_index_register { value = start_of_draw_region }
-        | Set_index_register_to_state_region ->
-            Set_index_register { value = start_of_state_region })
+        | Set_index_register_to_draw_region { offset } ->
+            Set_index_register { value = start_of_draw_region + offset }
+        | Set_index_register_to_state_region { offset } ->
+            Set_index_register { value = start_of_state_region + offset })
 end
 
 module Display_title_and_wait = struct
@@ -120,7 +121,7 @@ module Display_title_and_wait = struct
     let display_title =
       List.concat_mapi title ~f:(fun i character ->
           let set_index_register =
-            Opcode_plus.Set_index_register_to_draw_region
+            Opcode_plus.Set_index_register_to_draw_region { offset = 0 }
           in
           let set_registers =
             List.mapi character ~f:(fun index byte ->
@@ -161,7 +162,9 @@ module Init_game_state = struct
     let `x_diff x_diff, `y_diff y_diff, `byte_diff byte_diff =
       Helpers.encode_snake_direction Constants.snake_start_direction
     in
-    let set_index_register = Opcode_plus.Set_index_register_to_state_region in
+    let set_index_register =
+      Opcode_plus.Set_index_register_to_state_region { offset = 0 }
+    in
     let store_in_memory =
       let set_register ~index ~value =
         Opcode.Set_register { index; to_ = Non_timer (Direct value) }
@@ -169,7 +172,7 @@ module Init_game_state = struct
       let set_x_diff = set_register ~index:0 ~value:x_diff in
       let set_y_diff = set_register ~index:1 ~value:y_diff in
       let set_byte_diffs =
-        List.mapi byte_diff ~f:(fun byte i ->
+        List.mapi byte_diff ~f:(fun i byte ->
             set_register ~index:(i + 2) ~value:byte)
       in
       let set_snake_x =
@@ -193,21 +196,48 @@ module Init_game_state = struct
     set_index_register :: store_in_memory
 end
 
-module Display_snake = struct
-  let _opcodes =
-    let _set_index_for_state_read =
-      Opcode_plus.Set_index_register_to_state_region
+module Draw_snake = struct
+  let opcodes =
+    let write_snake_sprite_to_memory =
+      let set_index_for_draw_write =
+        Opcode_plus.Set_index_register_to_draw_region { offset = 0 }
+      in
+      let write_to_registers =
+        List.mapi Constants.snake_sprite ~f:(fun index byte ->
+            Opcode.Set_register { index; to_ = Non_timer (Direct byte) })
+        |> List.map ~f:Opcode_plus.complete
+      in
+      let write_to_memory =
+        Opcode.Store { up_to_index = List.length Constants.snake_sprite - 1 }
+        |> Opcode_plus.complete
+      in
+      [ [ set_index_for_draw_write ]; write_to_registers; [ write_to_memory ] ]
+      |> List.concat
     in
-    let _load =
-      Opcode.Load { up_to_index = State.total_bytes - 1 }
+    (* Upon the first draw of the snake, we only care to load the head coordinates *)
+    let set_index_for_state_read =
+      Opcode_plus.Set_index_register_to_state_region
+        { offset = State.Value.head_x.offset }
+    in
+    let load = Opcode.Load { up_to_index = 1 } |> Opcode_plus.complete in
+    let set_index_for_draw_read =
+      Opcode_plus.Set_index_register_to_draw_region { offset = 0 }
+    in
+    let draw =
+      Opcode.Draw
+        {
+          x_index = 0;
+          y_index = 1;
+          num_bytes = List.length Constants.snake_sprite;
+        }
       |> Opcode_plus.complete
     in
-    let _set_index_for_data_write =
-      Opcode_plus.Set_index_register_to_draw_region
-    in
-    ()
+    write_snake_sprite_to_memory
+    @ [ set_index_for_state_read; load; set_index_for_draw_read; draw ]
 end
 
 let opcodes =
-  [ Display_title_and_wait.opcodes; Init_game_state.opcodes ]
+  [
+    Display_title_and_wait.opcodes; Init_game_state.opcodes; Draw_snake.opcodes;
+  ]
   |> List.concat |> Opcode_plus.finalize

@@ -3,4 +3,4 @@
  (inline_tests)
  (libraries chip_8_base core)
  (preprocess
-  (pps ppx_inline_test ppx_jane)))
+  (pps ppx_inline_test ppx_jane ppx_stable)))

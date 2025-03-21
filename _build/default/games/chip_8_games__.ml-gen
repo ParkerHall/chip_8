@@ -3,6 +3,9 @@
 (** @canonical Chip_8_games.Import *)
 module Import = Chip_8_games__Import
 
+(** @canonical Chip_8_games.Opcode_plus *)
+module Opcode_plus = Chip_8_games__Opcode_plus
+
 (** @canonical Chip_8_games.Snake *)
 module Snake = Chip_8_games__Snake
 
