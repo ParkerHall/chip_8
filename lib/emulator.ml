@@ -398,8 +398,12 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
       in
       state
 
-let handle_opcode state ~opcode:raw_opcode =
+let handle_opcode (state : State.t) ~opcode:raw_opcode =
+  [%log.global.debug
+    "decoding opcode" (state.program_counter : int) (raw_opcode : int)];
   let opcode = Opcode.decode_exn raw_opcode in
+  [%log.global.debug
+    "handling opcode" (state.program_counter : int) (opcode : Opcode.t)];
   handle_opcode' state opcode
 
 let fetch (state : State.t) =
@@ -495,6 +499,6 @@ module Testing = struct
     | false -> Display.freeze state.display
 
   let display_font ~how = run_test ~how display_font_opcodes
-  let display_snake_title ~how = run_test ~how Chip_8_games.Snake.opcodes
+  let snake_testing ~how = run_test ~how Chip_8_games.Snake.opcodes
   let run = run ~options:Options.default_for_testing
 end

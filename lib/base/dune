@@ -1,5 +1,6 @@
 (library
  (name chip_8_base)
+ (inline_tests)
  (libraries core)
  (preprocess
   (pps ppx_inline_test ppx_jane)))

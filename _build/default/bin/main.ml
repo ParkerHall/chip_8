@@ -23,12 +23,18 @@ let testing_cmd =
   Command.async ~summary:"test chip-8 emulator"
     (let%map_open.Command test_name =
        flag "test-name" (required string) ~doc:"STRING name of test to run"
-     and how = How_to_run_test.flag in
+     and how = How_to_run_test.flag
+     and log_level =
+       flag "log-level"
+         (optional Async.Log.Level.arg)
+         ~doc:"LOG-LEVEL specify log level (default info)"
+     in
      fun () ->
+       Option.iter log_level ~f:Async.Log.Global.set_level;
        let test =
          match String.lowercase test_name with
          | "display-font" -> Emulator.Testing.display_font
-         | "display-snake-title" -> Emulator.Testing.display_snake_title
+         | "snake-testing" -> Emulator.Testing.snake_testing
          | _ -> raise_s [%message "Unknown test name" (test_name : string)]
        in
        test ~how)
