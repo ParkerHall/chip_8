@@ -6,7 +6,7 @@ module Constants = struct
   include Constants
 
   let keypress_frequency = Time_ns.Span.of_sec (1. /. 60.)
-  let opcode_frequency = Time_ns.Span.of_sec (1. /. 480.)
+  let opcode_frequency = Time_ns.Span.of_sec (1. /. 60.)
   let max_8_bit_int = int_of_float (2. ** 8.) - 1
   let repeat_keypress_for_n_cycles = 5
   let timer_frequency = Time_ns.Span.of_sec (1. /. 60.)
@@ -202,7 +202,10 @@ let handle_opcode' (state : State.t) (opcode : Opcode.t) =
         Registers.read_exn state.registers ~index:x_index
         % Constants.display_pixel_width
       in
-      let initial_y = Registers.read_exn state.registers ~index:y_index in
+      let initial_y =
+        Registers.read_exn state.registers ~index:y_index
+        % Constants.display_pixel_height
+      in
       Registers.unset_flag_register state.registers;
       let display =
         List.init num_bytes ~f:Fn.id

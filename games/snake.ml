@@ -15,30 +15,26 @@ end
 module Direction = struct
   type t = Up | Right | Down | Left [@@deriving enumerate, variants]
 
-  let init = Left
+  let init = Right
   let encode = Variants.to_rank
 
   let movement = function
-    | Up -> (0, 4)
+    | Up -> (0, 28)
     | Right -> (4, 0)
-    | Down -> (0, 28)
+    | Down -> (0, 4)
     | Left -> (60, 0)
 
   module Draw_diff = struct
     type t = { shift_x_by : int; shift_y_by : int; bytes : int list }
 
-    let get direction =
-      let shift_x_by, shift_y_by =
-        match direction with Up | Left -> (60, 28) | Right | Down -> (0, 0)
-      in
-      let bytes =
-        match direction with
-        | Up -> [ 0x0F; 0x0F; 0x0F; 0x0F; 0x0F; 0x0F; 0x0F; 0x0F ]
-        | Right -> [ 0xFF; 0xFF; 0xFF; 0xFF; 0x00; 0x00; 0x00; 0x00 ]
-        | Down -> [ 0xF0; 0xF0; 0xF0; 0xF0; 0xF0; 0xF0; 0xF0; 0xF0 ]
-        | Left -> [ 0x00; 0x00; 0x00; 0x00; 0xFF; 0xFF; 0xFF; 0xFF ]
-      in
-      { shift_x_by; shift_y_by; bytes }
+    let toggle_snake_bytes = [ 0xF0; 0xF0; 0xF0; 0xF0 ]
+
+    let clear_snake =
+      { shift_x_by = 0; shift_y_by = 0; bytes = toggle_snake_bytes }
+
+    let move_snake direction =
+      let shift_x_by, shift_y_by = movement direction in
+      { shift_x_by; shift_y_by; bytes = toggle_snake_bytes }
   end
 end
 
@@ -208,10 +204,8 @@ module Step_snake = struct
       |> Opcode_plus.Allowed_in_subroutine.Finalized;
     ]
 
-  let handle_direction direction =
-    let { Direction.Draw_diff.shift_x_by; shift_y_by; bytes } =
-      Direction.Draw_diff.get direction
-    in
+  let handle_draw_diff
+      ({ shift_x_by; shift_y_by; bytes } : Direction.Draw_diff.t) =
     let write_byte_diff_to_memory =
       let set_index_for_draw_write =
         Opcode_plus.Allowed_in_subroutine.Set_index_register_to_draw_region
@@ -251,6 +245,13 @@ module Step_snake = struct
       ]
       |> List.concat
     in
+    [ write_byte_diff_to_memory; update_snake_sprite ] |> List.concat
+
+  let handle_direction direction =
+    let clear_snake = handle_draw_diff Direction.Draw_diff.clear_snake in
+    let move_snake =
+      handle_draw_diff (Direction.Draw_diff.move_snake direction)
+    in
     let update_snake_location =
       let move_x, move_y = Direction.movement direction in
       let shift_x =
@@ -275,8 +276,7 @@ module Step_snake = struct
       ]
       |> List.concat
     in
-    [ write_byte_diff_to_memory; update_snake_sprite; update_snake_location ]
-    |> List.concat
+    [ clear_snake; move_snake; update_snake_location ] |> List.concat
 
   let skip_if direction =
     Opcode.Skip_if_register
@@ -326,8 +326,9 @@ let%expect_test "dump [opcodes]" =
       in
       let opcode = Opcode.sexp_of_t opcode |> Sexp.to_string in
       [%string "%{memory_location#Int}: %{opcode}"] |> print_endline);
-  [%expect {|
-    512: (Set_index_register(value 872))
+  [%expect
+    {|
+    512: (Set_index_register(value 936))
     514: (Set_register(index 0)(to_(Non_timer(Direct 96))))
     516: (Set_register(index 1)(to_(Non_timer(Direct 144))))
     518: (Set_register(index 2)(to_(Non_timer(Direct 64))))
@@ -338,7 +339,7 @@ let%expect_test "dump [opcodes]" =
     528: (Set_register(index 0)(to_(Non_timer(Direct 15))))
     530: (Set_register(index 1)(to_(Non_timer(Direct 13))))
     532: (Draw(x_index 0)(y_index 1)(num_bytes 6))
-    534: (Set_index_register(value 872))
+    534: (Set_index_register(value 936))
     536: (Set_register(index 0)(to_(Non_timer(Direct 144))))
     538: (Set_register(index 1)(to_(Non_timer(Direct 144))))
     540: (Set_register(index 2)(to_(Non_timer(Direct 208))))
@@ -349,7 +350,7 @@ let%expect_test "dump [opcodes]" =
     550: (Set_register(index 0)(to_(Non_timer(Direct 23))))
     552: (Set_register(index 1)(to_(Non_timer(Direct 13))))
     554: (Draw(x_index 0)(y_index 1)(num_bytes 6))
-    556: (Set_index_register(value 872))
+    556: (Set_index_register(value 936))
     558: (Set_register(index 0)(to_(Non_timer(Direct 96))))
     560: (Set_register(index 1)(to_(Non_timer(Direct 144))))
     562: (Set_register(index 2)(to_(Non_timer(Direct 144))))
@@ -360,7 +361,7 @@ let%expect_test "dump [opcodes]" =
     572: (Set_register(index 0)(to_(Non_timer(Direct 31))))
     574: (Set_register(index 1)(to_(Non_timer(Direct 13))))
     576: (Draw(x_index 0)(y_index 1)(num_bytes 6))
-    578: (Set_index_register(value 872))
+    578: (Set_index_register(value 936))
     580: (Set_register(index 0)(to_(Non_timer(Direct 144))))
     582: (Set_register(index 1)(to_(Non_timer(Direct 160))))
     584: (Set_register(index 2)(to_(Non_timer(Direct 192))))
@@ -371,7 +372,7 @@ let%expect_test "dump [opcodes]" =
     594: (Set_register(index 0)(to_(Non_timer(Direct 39))))
     596: (Set_register(index 1)(to_(Non_timer(Direct 13))))
     598: (Draw(x_index 0)(y_index 1)(num_bytes 6))
-    600: (Set_index_register(value 872))
+    600: (Set_index_register(value 936))
     602: (Set_register(index 0)(to_(Non_timer(Direct 240))))
     604: (Set_register(index 1)(to_(Non_timer(Direct 128))))
     606: (Set_register(index 2)(to_(Non_timer(Direct 128))))
@@ -384,127 +385,159 @@ let%expect_test "dump [opcodes]" =
     620: (Draw(x_index 0)(y_index 1)(num_bytes 6))
     622: (Get_key(index 0))
     624: Clear_screen
-    626: (Set_index_register(value 880))
-    628: (Set_register(index 0)(to_(Non_timer(Direct 3))))
+    626: (Set_index_register(value 944))
+    628: (Set_register(index 0)(to_(Non_timer(Direct 1))))
     630: (Set_register(index 1)(to_(Non_timer(Direct 28))))
     632: (Set_register(index 2)(to_(Non_timer(Direct 12))))
     634: (Store(up_to_index 2))
-    636: (Set_index_register(value 872))
+    636: (Set_index_register(value 936))
     638: (Set_register(index 0)(to_(Non_timer(Direct 240))))
     640: (Set_register(index 1)(to_(Non_timer(Direct 240))))
     642: (Set_register(index 2)(to_(Non_timer(Direct 240))))
     644: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     646: (Store(up_to_index 3))
-    648: (Set_index_register(value 881))
+    648: (Set_index_register(value 945))
     650: (Load(up_to_index 1))
-    652: (Set_index_register(value 872))
+    652: (Set_index_register(value 936))
     654: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    656: (Set_index_register(value 880))
+    656: (Set_index_register(value 944))
     658: (Load(up_to_index 0))
     660: (Skip_if_register(left_index 0)(right(Direct 0))(skip_if Not_equal))
     662: (Subroutine_start(memory_location 680))
     664: (Skip_if_register(left_index 0)(right(Direct 1))(skip_if Not_equal))
-    666: (Subroutine_start(memory_location 728))
+    666: (Subroutine_start(memory_location 744))
     668: (Skip_if_register(left_index 0)(right(Direct 2))(skip_if Not_equal))
-    670: (Subroutine_start(memory_location 776))
+    670: (Subroutine_start(memory_location 808))
     672: (Skip_if_register(left_index 0)(right(Direct 3))(skip_if Not_equal))
-    674: (Subroutine_start(memory_location 824))
+    674: (Subroutine_start(memory_location 872))
     676: (Jump(new_program_counter_base 656)(with_offset false))
     678: Halt
-    680: (Set_index_register(value 872))
-    682: (Set_register(index 0)(to_(Non_timer(Direct 15))))
-    684: (Set_register(index 1)(to_(Non_timer(Direct 15))))
-    686: (Set_register(index 2)(to_(Non_timer(Direct 15))))
-    688: (Set_register(index 3)(to_(Non_timer(Direct 15))))
-    690: (Set_register(index 4)(to_(Non_timer(Direct 15))))
-    692: (Set_register(index 5)(to_(Non_timer(Direct 15))))
-    694: (Set_register(index 6)(to_(Non_timer(Direct 15))))
-    696: (Set_register(index 7)(to_(Non_timer(Direct 15))))
-    698: (Store(up_to_index 7))
-    700: (Set_index_register(value 881))
-    702: (Load(up_to_index 1))
-    704: (Add_to_register(index 0)(to_add(Direct 60)))
-    706: (Add_to_register(index 1)(to_add(Direct 28)))
-    708: (Set_index_register(value 872))
-    710: (Draw(x_index 0)(y_index 1)(num_bytes 8))
-    712: (Set_index_register(value 881))
-    714: (Load(up_to_index 1))
-    716: (Add_to_register(index 0)(to_add(Direct 0)))
-    718: (Add_to_register(index 1)(to_add(Direct 4)))
-    720: (Set_index_register(value 881))
-    722: (Store(up_to_index 1))
-    724: Subroutine_end
-    726: Halt
-    728: (Set_index_register(value 872))
-    730: (Set_register(index 0)(to_(Non_timer(Direct 255))))
-    732: (Set_register(index 1)(to_(Non_timer(Direct 255))))
-    734: (Set_register(index 2)(to_(Non_timer(Direct 255))))
-    736: (Set_register(index 3)(to_(Non_timer(Direct 255))))
-    738: (Set_register(index 4)(to_(Non_timer(Direct 0))))
-    740: (Set_register(index 5)(to_(Non_timer(Direct 0))))
-    742: (Set_register(index 6)(to_(Non_timer(Direct 0))))
-    744: (Set_register(index 7)(to_(Non_timer(Direct 0))))
-    746: (Store(up_to_index 7))
-    748: (Set_index_register(value 881))
-    750: (Load(up_to_index 1))
-    752: (Add_to_register(index 0)(to_add(Direct 0)))
-    754: (Add_to_register(index 1)(to_add(Direct 0)))
-    756: (Set_index_register(value 872))
-    758: (Draw(x_index 0)(y_index 1)(num_bytes 8))
-    760: (Set_index_register(value 881))
-    762: (Load(up_to_index 1))
-    764: (Add_to_register(index 0)(to_add(Direct 4)))
-    766: (Add_to_register(index 1)(to_add(Direct 0)))
-    768: (Set_index_register(value 881))
-    770: (Store(up_to_index 1))
-    772: Subroutine_end
-    774: Halt
-    776: (Set_index_register(value 872))
-    778: (Set_register(index 0)(to_(Non_timer(Direct 240))))
-    780: (Set_register(index 1)(to_(Non_timer(Direct 240))))
-    782: (Set_register(index 2)(to_(Non_timer(Direct 240))))
-    784: (Set_register(index 3)(to_(Non_timer(Direct 240))))
-    786: (Set_register(index 4)(to_(Non_timer(Direct 240))))
-    788: (Set_register(index 5)(to_(Non_timer(Direct 240))))
-    790: (Set_register(index 6)(to_(Non_timer(Direct 240))))
-    792: (Set_register(index 7)(to_(Non_timer(Direct 240))))
-    794: (Store(up_to_index 7))
-    796: (Set_index_register(value 881))
-    798: (Load(up_to_index 1))
-    800: (Add_to_register(index 0)(to_add(Direct 0)))
-    802: (Add_to_register(index 1)(to_add(Direct 0)))
-    804: (Set_index_register(value 872))
-    806: (Draw(x_index 0)(y_index 1)(num_bytes 8))
-    808: (Set_index_register(value 881))
-    810: (Load(up_to_index 1))
-    812: (Add_to_register(index 0)(to_add(Direct 0)))
-    814: (Add_to_register(index 1)(to_add(Direct 28)))
-    816: (Set_index_register(value 881))
-    818: (Store(up_to_index 1))
-    820: Subroutine_end
-    822: Halt
-    824: (Set_index_register(value 872))
-    826: (Set_register(index 0)(to_(Non_timer(Direct 0))))
-    828: (Set_register(index 1)(to_(Non_timer(Direct 0))))
-    830: (Set_register(index 2)(to_(Non_timer(Direct 0))))
-    832: (Set_register(index 3)(to_(Non_timer(Direct 0))))
-    834: (Set_register(index 4)(to_(Non_timer(Direct 255))))
-    836: (Set_register(index 5)(to_(Non_timer(Direct 255))))
-    838: (Set_register(index 6)(to_(Non_timer(Direct 255))))
-    840: (Set_register(index 7)(to_(Non_timer(Direct 255))))
-    842: (Store(up_to_index 7))
-    844: (Set_index_register(value 881))
+    680: (Set_index_register(value 936))
+    682: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    684: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    686: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    688: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    690: (Store(up_to_index 3))
+    692: (Set_index_register(value 945))
+    694: (Load(up_to_index 1))
+    696: (Add_to_register(index 0)(to_add(Direct 0)))
+    698: (Add_to_register(index 1)(to_add(Direct 0)))
+    700: (Set_index_register(value 936))
+    702: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    704: (Set_index_register(value 936))
+    706: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    708: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    710: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    712: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    714: (Store(up_to_index 3))
+    716: (Set_index_register(value 945))
+    718: (Load(up_to_index 1))
+    720: (Add_to_register(index 0)(to_add(Direct 0)))
+    722: (Add_to_register(index 1)(to_add(Direct 28)))
+    724: (Set_index_register(value 936))
+    726: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    728: (Set_index_register(value 945))
+    730: (Load(up_to_index 1))
+    732: (Add_to_register(index 0)(to_add(Direct 0)))
+    734: (Add_to_register(index 1)(to_add(Direct 28)))
+    736: (Set_index_register(value 945))
+    738: (Store(up_to_index 1))
+    740: Subroutine_end
+    742: Halt
+    744: (Set_index_register(value 936))
+    746: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    748: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    750: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    752: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    754: (Store(up_to_index 3))
+    756: (Set_index_register(value 945))
+    758: (Load(up_to_index 1))
+    760: (Add_to_register(index 0)(to_add(Direct 0)))
+    762: (Add_to_register(index 1)(to_add(Direct 0)))
+    764: (Set_index_register(value 936))
+    766: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    768: (Set_index_register(value 936))
+    770: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    772: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    774: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    776: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    778: (Store(up_to_index 3))
+    780: (Set_index_register(value 945))
+    782: (Load(up_to_index 1))
+    784: (Add_to_register(index 0)(to_add(Direct 4)))
+    786: (Add_to_register(index 1)(to_add(Direct 0)))
+    788: (Set_index_register(value 936))
+    790: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    792: (Set_index_register(value 945))
+    794: (Load(up_to_index 1))
+    796: (Add_to_register(index 0)(to_add(Direct 4)))
+    798: (Add_to_register(index 1)(to_add(Direct 0)))
+    800: (Set_index_register(value 945))
+    802: (Store(up_to_index 1))
+    804: Subroutine_end
+    806: Halt
+    808: (Set_index_register(value 936))
+    810: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    812: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    814: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    816: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    818: (Store(up_to_index 3))
+    820: (Set_index_register(value 945))
+    822: (Load(up_to_index 1))
+    824: (Add_to_register(index 0)(to_add(Direct 0)))
+    826: (Add_to_register(index 1)(to_add(Direct 0)))
+    828: (Set_index_register(value 936))
+    830: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    832: (Set_index_register(value 936))
+    834: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    836: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    838: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    840: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    842: (Store(up_to_index 3))
+    844: (Set_index_register(value 945))
     846: (Load(up_to_index 1))
-    848: (Add_to_register(index 0)(to_add(Direct 60)))
-    850: (Add_to_register(index 1)(to_add(Direct 28)))
-    852: (Set_index_register(value 872))
-    854: (Draw(x_index 0)(y_index 1)(num_bytes 8))
-    856: (Set_index_register(value 881))
+    848: (Add_to_register(index 0)(to_add(Direct 0)))
+    850: (Add_to_register(index 1)(to_add(Direct 4)))
+    852: (Set_index_register(value 936))
+    854: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    856: (Set_index_register(value 945))
     858: (Load(up_to_index 1))
-    860: (Add_to_register(index 0)(to_add(Direct 60)))
-    862: (Add_to_register(index 1)(to_add(Direct 0)))
-    864: (Set_index_register(value 881))
+    860: (Add_to_register(index 0)(to_add(Direct 0)))
+    862: (Add_to_register(index 1)(to_add(Direct 4)))
+    864: (Set_index_register(value 945))
     866: (Store(up_to_index 1))
     868: Subroutine_end
     870: Halt
+    872: (Set_index_register(value 936))
+    874: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    876: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    878: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    880: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    882: (Store(up_to_index 3))
+    884: (Set_index_register(value 945))
+    886: (Load(up_to_index 1))
+    888: (Add_to_register(index 0)(to_add(Direct 0)))
+    890: (Add_to_register(index 1)(to_add(Direct 0)))
+    892: (Set_index_register(value 936))
+    894: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    896: (Set_index_register(value 936))
+    898: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    900: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    902: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    904: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    906: (Store(up_to_index 3))
+    908: (Set_index_register(value 945))
+    910: (Load(up_to_index 1))
+    912: (Add_to_register(index 0)(to_add(Direct 60)))
+    914: (Add_to_register(index 1)(to_add(Direct 0)))
+    916: (Set_index_register(value 936))
+    918: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    920: (Set_index_register(value 945))
+    922: (Load(up_to_index 1))
+    924: (Add_to_register(index 0)(to_add(Direct 60)))
+    926: (Add_to_register(index 1)(to_add(Direct 0)))
+    928: (Set_index_register(value 945))
+    930: (Store(up_to_index 1))
+    932: Subroutine_end
+    934: Halt
     |}]
