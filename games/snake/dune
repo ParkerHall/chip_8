@@ -1,0 +1,6 @@
+(library
+ (name snake)
+ (inline_tests)
+ (libraries chip_8_base chip_8_games_base core)
+ (preprocess
+  (pps ppx_inline_test ppx_jane ppx_stable)))

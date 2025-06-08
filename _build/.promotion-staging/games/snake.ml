@@ -4,7 +4,7 @@ open! Import
 module Constants = struct
   include Constants
 
-  let scratch_bytes_for_draw = 8
+  let scratch_bytes_for_draw = 4
   let snake_sprite = [ 0xF0; 0xF0; 0xF0; 0xF0 ]
 
   (* roughly middle of the screen, skewing slightly up and to the left *)
@@ -15,26 +15,24 @@ end
 module Direction = struct
   type t = Up | Right | Down | Left [@@deriving enumerate, variants]
 
-  let init = Right
+  let init = Left
   let encode = Variants.to_rank
 
   let movement = function
-    | Up -> (0, 28)
+    | Up -> (0, Constants.display_pixel_height - 4)
     | Right -> (4, 0)
     | Down -> (0, 4)
-    | Left -> (60, 0)
+    | Left -> (Constants.display_pixel_width - 4, 0)
 
   module Draw_diff = struct
     type t = { shift_x_by : int; shift_y_by : int; bytes : int list }
 
-    let toggle_snake_bytes = [ 0xF0; 0xF0; 0xF0; 0xF0 ]
-
     let clear_snake =
-      { shift_x_by = 0; shift_y_by = 0; bytes = toggle_snake_bytes }
+      { shift_x_by = 0; shift_y_by = 0; bytes = Constants.snake_sprite }
 
     let move_snake direction =
       let shift_x_by, shift_y_by = movement direction in
-      { shift_x_by; shift_y_by; bytes = toggle_snake_bytes }
+      { shift_x_by; shift_y_by; bytes = Constants.snake_sprite }
   end
 end
 
@@ -385,8 +383,8 @@ let%expect_test "dump [opcodes]" =
     620: (Draw(x_index 0)(y_index 1)(num_bytes 6))
     622: (Get_key(index 0))
     624: Clear_screen
-    626: (Set_index_register(value 944))
-    628: (Set_register(index 0)(to_(Non_timer(Direct 1))))
+    626: (Set_index_register(value 940))
+    628: (Set_register(index 0)(to_(Non_timer(Direct 3))))
     630: (Set_register(index 1)(to_(Non_timer(Direct 28))))
     632: (Set_register(index 2)(to_(Non_timer(Direct 12))))
     634: (Store(up_to_index 2))
@@ -396,11 +394,11 @@ let%expect_test "dump [opcodes]" =
     642: (Set_register(index 2)(to_(Non_timer(Direct 240))))
     644: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     646: (Store(up_to_index 3))
-    648: (Set_index_register(value 945))
+    648: (Set_index_register(value 941))
     650: (Load(up_to_index 1))
     652: (Set_index_register(value 936))
     654: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    656: (Set_index_register(value 944))
+    656: (Set_index_register(value 940))
     658: (Load(up_to_index 0))
     660: (Skip_if_register(left_index 0)(right(Direct 0))(skip_if Not_equal))
     662: (Subroutine_start(memory_location 680))
@@ -418,7 +416,7 @@ let%expect_test "dump [opcodes]" =
     686: (Set_register(index 2)(to_(Non_timer(Direct 240))))
     688: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     690: (Store(up_to_index 3))
-    692: (Set_index_register(value 945))
+    692: (Set_index_register(value 941))
     694: (Load(up_to_index 1))
     696: (Add_to_register(index 0)(to_add(Direct 0)))
     698: (Add_to_register(index 1)(to_add(Direct 0)))
@@ -430,17 +428,17 @@ let%expect_test "dump [opcodes]" =
     710: (Set_register(index 2)(to_(Non_timer(Direct 240))))
     712: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     714: (Store(up_to_index 3))
-    716: (Set_index_register(value 945))
+    716: (Set_index_register(value 941))
     718: (Load(up_to_index 1))
     720: (Add_to_register(index 0)(to_add(Direct 0)))
     722: (Add_to_register(index 1)(to_add(Direct 28)))
     724: (Set_index_register(value 936))
     726: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    728: (Set_index_register(value 945))
+    728: (Set_index_register(value 941))
     730: (Load(up_to_index 1))
     732: (Add_to_register(index 0)(to_add(Direct 0)))
     734: (Add_to_register(index 1)(to_add(Direct 28)))
-    736: (Set_index_register(value 945))
+    736: (Set_index_register(value 941))
     738: (Store(up_to_index 1))
     740: Subroutine_end
     742: Halt
@@ -450,7 +448,7 @@ let%expect_test "dump [opcodes]" =
     750: (Set_register(index 2)(to_(Non_timer(Direct 240))))
     752: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     754: (Store(up_to_index 3))
-    756: (Set_index_register(value 945))
+    756: (Set_index_register(value 941))
     758: (Load(up_to_index 1))
     760: (Add_to_register(index 0)(to_add(Direct 0)))
     762: (Add_to_register(index 1)(to_add(Direct 0)))
@@ -462,17 +460,17 @@ let%expect_test "dump [opcodes]" =
     774: (Set_register(index 2)(to_(Non_timer(Direct 240))))
     776: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     778: (Store(up_to_index 3))
-    780: (Set_index_register(value 945))
+    780: (Set_index_register(value 941))
     782: (Load(up_to_index 1))
     784: (Add_to_register(index 0)(to_add(Direct 4)))
     786: (Add_to_register(index 1)(to_add(Direct 0)))
     788: (Set_index_register(value 936))
     790: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    792: (Set_index_register(value 945))
+    792: (Set_index_register(value 941))
     794: (Load(up_to_index 1))
     796: (Add_to_register(index 0)(to_add(Direct 4)))
     798: (Add_to_register(index 1)(to_add(Direct 0)))
-    800: (Set_index_register(value 945))
+    800: (Set_index_register(value 941))
     802: (Store(up_to_index 1))
     804: Subroutine_end
     806: Halt
@@ -482,7 +480,7 @@ let%expect_test "dump [opcodes]" =
     814: (Set_register(index 2)(to_(Non_timer(Direct 240))))
     816: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     818: (Store(up_to_index 3))
-    820: (Set_index_register(value 945))
+    820: (Set_index_register(value 941))
     822: (Load(up_to_index 1))
     824: (Add_to_register(index 0)(to_add(Direct 0)))
     826: (Add_to_register(index 1)(to_add(Direct 0)))
@@ -494,17 +492,17 @@ let%expect_test "dump [opcodes]" =
     838: (Set_register(index 2)(to_(Non_timer(Direct 240))))
     840: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     842: (Store(up_to_index 3))
-    844: (Set_index_register(value 945))
+    844: (Set_index_register(value 941))
     846: (Load(up_to_index 1))
     848: (Add_to_register(index 0)(to_add(Direct 0)))
     850: (Add_to_register(index 1)(to_add(Direct 4)))
     852: (Set_index_register(value 936))
     854: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    856: (Set_index_register(value 945))
+    856: (Set_index_register(value 941))
     858: (Load(up_to_index 1))
     860: (Add_to_register(index 0)(to_add(Direct 0)))
     862: (Add_to_register(index 1)(to_add(Direct 4)))
-    864: (Set_index_register(value 945))
+    864: (Set_index_register(value 941))
     866: (Store(up_to_index 1))
     868: Subroutine_end
     870: Halt
@@ -514,7 +512,7 @@ let%expect_test "dump [opcodes]" =
     878: (Set_register(index 2)(to_(Non_timer(Direct 240))))
     880: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     882: (Store(up_to_index 3))
-    884: (Set_index_register(value 945))
+    884: (Set_index_register(value 941))
     886: (Load(up_to_index 1))
     888: (Add_to_register(index 0)(to_add(Direct 0)))
     890: (Add_to_register(index 1)(to_add(Direct 0)))
@@ -526,17 +524,17 @@ let%expect_test "dump [opcodes]" =
     902: (Set_register(index 2)(to_(Non_timer(Direct 240))))
     904: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     906: (Store(up_to_index 3))
-    908: (Set_index_register(value 945))
+    908: (Set_index_register(value 941))
     910: (Load(up_to_index 1))
     912: (Add_to_register(index 0)(to_add(Direct 60)))
     914: (Add_to_register(index 1)(to_add(Direct 0)))
     916: (Set_index_register(value 936))
     918: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    920: (Set_index_register(value 945))
+    920: (Set_index_register(value 941))
     922: (Load(up_to_index 1))
     924: (Add_to_register(index 0)(to_add(Direct 60)))
     926: (Add_to_register(index 1)(to_add(Direct 0)))
-    928: (Set_index_register(value 945))
+    928: (Set_index_register(value 941))
     930: (Store(up_to_index 1))
     932: Subroutine_end
     934: Halt

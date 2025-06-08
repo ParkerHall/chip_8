@@ -1,1 +1,1 @@
-module Snake = Snake
+module Snake = Snake.Game
