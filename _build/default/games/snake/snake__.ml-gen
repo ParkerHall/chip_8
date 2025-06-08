@@ -6,5 +6,8 @@ module Game = Snake__Game
 (** @canonical Snake.Import *)
 module Import = Snake__Import
 
+(** @canonical Snake.State *)
+module State = Snake__State
+
 module Snake__ = struct end
 [@@deprecated "this module is shadowed"]
