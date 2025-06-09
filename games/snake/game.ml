@@ -1,41 +1,6 @@
 open! Core
 open! Import
 
-module Constants = struct
-  include Constants
-
-  let scratch_bytes_for_draw = 4
-  let snake_sprite = [ 0xF0; 0xF0; 0xF0; 0xF0 ]
-
-  (* roughly middle of the screen, skewing slightly up and to the left *)
-  let snake_start_x = 28
-  let snake_start_y = 12
-end
-
-module Direction = struct
-  type t = Up | Right | Down | Left [@@deriving enumerate, variants]
-
-  let init = Left
-  let encode = Variants.to_rank
-
-  let movement = function
-    | Up -> (0, Constants.display_pixel_height - 4)
-    | Right -> (4, 0)
-    | Down -> (0, 4)
-    | Left -> (Constants.display_pixel_width - 4, 0)
-
-  module Draw_diff = struct
-    type t = { shift_x_by : int; shift_y_by : int; bytes : int list }
-
-    let clear_snake =
-      { shift_x_by = 0; shift_y_by = 0; bytes = Constants.snake_sprite }
-
-    let move_snake direction =
-      let shift_x_by, shift_y_by = movement direction in
-      { shift_x_by; shift_y_by; bytes = Constants.snake_sprite }
-  end
-end
-
 module Display_title_and_wait = struct
   let pad bytes = List.map bytes ~f:(fun byte -> byte lsl 4)
   let s = [ 0b0110; 0b1001; 0b0100; 0b0010; 0b1001; 0b0110 ] |> pad
