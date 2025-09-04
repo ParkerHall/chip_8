@@ -1,4 +1,5 @@
 open! Core
+open! Async
 open! Import
 
 module Allowed_in_subroutine = struct
@@ -147,6 +148,7 @@ let%expect_test "[flatten_subroutines_exn] - standard" =
     30: (Finalized Subroutine_end)
     32: (Finalized Halt)
     |}]
+  |> return
 
 let%expect_test "[flatten_subroutines_exn] - nested subroutine" =
   let subroutine =
@@ -183,8 +185,9 @@ let%expect_test "[flatten_subroutines_exn] - nested subroutine" =
       (ts
        ((Subroutine_body
          ((Finalized (Subroutine_start (memory_location 0)))
-          (Finalized (Set_index_register (value 1))) (Finalized Subroutine_end)))))))
+          (Finalized (Set_index_register (value 1))) (Finalized Subroutine_end))))))) 
     |}]
+  |> return
 
 let scratch_bytes_for_draw ts =
   let default = 0 in

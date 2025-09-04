@@ -63,7 +63,7 @@ let init =
   let store ~up_to_index =
     Opcode.Store { up_to_index } |> Opcode_plus.finalized
   in
-  let start_index =
+  let head_start_index =
     Constants.snake_start_x
     + Constants.snake_start_y
       * (Constants.display_pixel_width / Constants.size_of_snake)
@@ -71,12 +71,12 @@ let init =
   let init_snake = Snake_byte.create Direction.Right in
   (* note that we init the snake as size 2. both snake bytes start facing [Right] *)
   [
-    set_register ~index:0 ~value:start_index;
-    set_register ~index:1 ~value:(start_index - 1);
+    set_register ~index:0 ~value:head_start_index;
+    set_register ~index:1 ~value:(head_start_index - 1);
     set_index_register ~offset:0;
     store ~up_to_index:1;
     set_register ~index:0 ~value:init_snake;
     set_register ~index:1 ~value:init_snake;
-    set_index_register ~offset:(Value.snake.offset + start_index - 1);
+    set_index_register ~offset:(Value.snake.offset + head_start_index - 1);
     store ~up_to_index:0;
   ]
