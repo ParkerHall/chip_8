@@ -1,8 +1,0 @@
-lib: [
-  "_build/install/default/lib/chip_8/META"
-  "_build/install/default/lib/chip_8/dune-package"
-  "_build/install/default/lib/chip_8/opam"
-]
-bin: [
-  "_build/install/default/bin/chip_8"
-]
