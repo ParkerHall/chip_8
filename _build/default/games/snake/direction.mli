@@ -3,7 +3,6 @@ open! Import
 
 type t = Up | Right | Down | Left [@@deriving enumerate, variants]
 
-val init : t
 val encode : t -> int
 
 val movement : t -> int * int

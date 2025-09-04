@@ -1,1 +1,1 @@
-games/snake/state.pp.ml: Core Expect_test_config Import Inline_test_config Int List Ppx_bench_lib Ppx_expect_runtime Ppx_inline_test_lib Ppx_module_timer_runtime Ppx_sexp_conv_lib
+games/snake/state.pp.ml: Constants Core Direction Expect_test_config Hexstring_helpers Import Inline_test_config Int List Opcode Opcode_plus Ppx_bench_lib Ppx_expect_runtime Ppx_inline_test_lib Ppx_module_timer_runtime Ppx_sexp_conv_lib

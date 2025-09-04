@@ -1,1 +1,1 @@
-games/snake/state.pp.mli: Core Import
+games/snake/state.pp.mli: Core Direction Import Opcode_plus

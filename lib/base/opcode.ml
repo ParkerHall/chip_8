@@ -8,9 +8,9 @@ module Value_source = struct
   module Non_timer = struct
     type t = Direct of int | Register of int [@@deriving sexp_of]
 
-    let to_nibbles = function
+    let to_nibbles ~register_last_nibble = function
       | Direct value -> [ value lsr 4; value land 0x0F ]
-      | Register index -> [ index; 0x0 ]
+      | Register index -> [ index; register_last_nibble ]
   end
 
   type t = Non_timer of Non_timer.t | Timer of Timer.t [@@deriving sexp_of]
@@ -64,7 +64,9 @@ let encode_exn = function
   | Add_to_index_register { index } -> combine_nibbles [ 0xF; index; 0x1; 0xE ]
   | Add_to_register { index; to_add } ->
       let n1 = match to_add with Direct _ -> 0x7 | Register _ -> 0x8 in
-      let n34 = Value_source.Non_timer.to_nibbles to_add in
+      let n34 =
+        Value_source.Non_timer.to_nibbles ~register_last_nibble:0x4 to_add
+      in
       n1 :: index :: n34 |> combine_nibbles
   | Binary_operation { x_index; y_index; operation } ->
       let n4 = match operation with `OR -> 0x1 | `AND -> 0x2 | `XOR -> -0x3 in
@@ -94,7 +96,9 @@ let encode_exn = function
       let n34 =
         match to_ with
         | Timer _ -> [ 0x0; 0x7 ]
-        | Non_timer non_timer -> Value_source.Non_timer.to_nibbles non_timer
+        | Non_timer non_timer ->
+            Value_source.Non_timer.to_nibbles ~register_last_nibble:0x0
+              non_timer
       in
       n1 :: index :: n34 |> combine_nibbles
   | Set_timer { index; timer } ->
@@ -116,7 +120,9 @@ let encode_exn = function
         | Register _, Equal -> 0x5
         | Register _, Not_equal -> 0x9
       in
-      let n34 = Value_source.Non_timer.to_nibbles right in
+      let n34 =
+        Value_source.Non_timer.to_nibbles ~register_last_nibble:0x0 right
+      in
       n1 :: left_index :: n34 |> combine_nibbles
   | Store { up_to_index } -> combine_nibbles [ 0xF; up_to_index; 0x5; 0x5 ]
   | Subroutine_end -> 0x00EE

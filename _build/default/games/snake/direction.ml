@@ -1,9 +1,8 @@
 open! Core
 open! Import
 
-type t = Up | Right | Down | Left [@@deriving enumerate, variants]
+type t = Up | Right | Down | Left [@@deriving enumerate, sexp_of, variants]
 
-let init = Left
 let encode = Variants.to_rank
 
 let movement = function
@@ -11,6 +10,16 @@ let movement = function
   | Right -> (4, 0)
   | Down -> (0, 4)
   | Left -> (Constants.display_pixel_width - 4, 0)
+
+let%expect_test "[encode]" =
+  List.iter all ~f:(fun t -> print_s [%message (t : t) (encode t : int)]);
+  [%expect
+    {|
+    ((t Up) ("encode t" 0))
+    ((t Right) ("encode t" 1))
+    ((t Down) ("encode t" 2))
+    ((t Left) ("encode t" 3))
+    |}]
 
 module Draw_diff = struct
   type direction = t

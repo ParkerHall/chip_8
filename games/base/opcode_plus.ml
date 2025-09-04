@@ -54,7 +54,7 @@ let assert_no_nested_subroutines ts =
     | Set_index_register_to_state_region _ ->
         ())
 
-(* Every [Subroutine_body opcodes] is Allowed_in_subroutine mapped into a [Subroutine_start] in the main body
+(* Every [Subroutine_body opcodes] is mapped into a [Subroutine_start] in the main body
    and [opcodes; Subroutine_end; Halt] in the subroutine memory region *)
 let flatten_subroutines_exn
     ?(start_memory_location = Constants.program_start_memory_location) ts =
@@ -186,14 +186,25 @@ let%expect_test "[flatten_subroutines_exn] - nested subroutine" =
           (Finalized (Set_index_register (value 1))) (Finalized Subroutine_end)))))))
     |}]
 
-let finalize_all_exn ~scratch_bytes_for_draw ts =
+let scratch_bytes_for_draw ts =
+  let default = 0 in
+  List.map ts ~f:(function
+    | Allowed_in_subroutine.Finalized (Opcode.Draw { num_bytes; _ }) ->
+        num_bytes
+    | _ -> default)
+  |> List.max_elt ~compare:Int.compare
+  |> Option.value ~default:0
+
+let finalize_all_exn ts =
   let ts = flatten_subroutines_exn ts in
   let start_of_draw_region =
     let num_opcodes = List.length ts in
     Constants.program_start_memory_location
     + (num_opcodes * Constants.bytes_per_opcode)
   in
-  let start_of_state_region = start_of_draw_region + scratch_bytes_for_draw in
+  let start_of_state_region =
+    start_of_draw_region + scratch_bytes_for_draw ts
+  in
   List.mapi ts ~f:(fun i opcode ->
       let program_counter = Constants.program_start_memory_location + (i * 2) in
       match opcode with

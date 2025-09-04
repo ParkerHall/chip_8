@@ -1,1 +1,1 @@
-games/snake/direction.pp.ml: Constants Core Import Ppx_bench_lib Ppx_expect_runtime Ppx_inline_test_lib Ppx_module_timer_runtime Stdlib Variantslib
+games/snake/direction.pp.ml: Constants Core Expect_test_config Import Inline_test_config List Ppx_bench_lib Ppx_expect_runtime Ppx_inline_test_lib Ppx_module_timer_runtime Ppx_sexp_conv_lib Sexplib0 Stdlib Variantslib

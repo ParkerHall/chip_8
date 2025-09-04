@@ -60,55 +60,95 @@ module Display_title_and_wait = struct
     display_title @ wait_and_clear
 end
 
-module Init_game_state = struct
-  let opcodes =
-    let set_index_register =
-      Opcode_plus.Set_index_register_to_state_region { offset = 0 }
-    in
-    let store_in_memory =
-      let set_register ~index ~value =
-        Opcode.Set_register { index; to_ = Non_timer (Direct value) }
-      in
-      let set_direction =
-        set_register ~index:0 ~value:Direction.(encode init)
-      in
-      let set_snake_x = set_register ~index:1 ~value:Constants.snake_start_x in
-      let set_snake_y = set_register ~index:2 ~value:Constants.snake_start_y in
-      [
-        set_direction;
-        set_snake_x;
-        set_snake_y;
-        Opcode.Store { up_to_index = State.total_bytes - 1 };
-      ]
-      |> List.map ~f:Opcode_plus.finalized
-    in
-    set_index_register :: store_in_memory
-end
+let state_offset = function
+  | `head -> State.Value.head_index.offset
+  | `tail -> State.Value.tail_index.offset
 
 module Draw_snake = struct
-  let opcodes =
-    let write_snake_sprite_to_memory =
-      let set_index_for_draw_write =
-        Opcode_plus.Set_index_register_to_draw_region { offset = 0 }
+  let snakes_per_row = Constants.display_pixel_width / Constants.size_of_snake
+  let state_to_display_shift = Constants.size_of_snake |> Int.floor_log2
+
+  let shift_in_place ~index ~direction ~n =
+    List.init n ~f:(fun (_ : int) ->
+        Opcode.Shift { x_index = index; y_index = index; direction })
+
+  let min_scratch_index ~do_not_include =
+    let do_not_include = Int.Set.of_list do_not_include in
+    List.init Constants.num_registers ~f:Fn.id
+    |> List.find_exn ~f:(fun i -> Set.mem do_not_include i |> not)
+
+  (* loads index value from [state_offset], converts to display x and y coordinates,
+    and stores them in [x_index] and [y_index], respectively *)
+  let convert_index_to_coords ~x_index ~y_index ~state_offset =
+    let scratch_index =
+      min_scratch_index ~do_not_include:[ x_index; y_index ]
+    in
+    let set_index_for_state_read =
+      Opcode_plus.Set_index_register_to_state_region { offset = state_offset }
+    in
+    (* loads state-space index to index 0 *)
+    let load = Opcode.Load { up_to_index = 0 } in
+    let copy_to_x =
+      Opcode.Set_register { index = x_index; to_ = Non_timer (Register 0) }
+    in
+    let copy_to_y =
+      Opcode.Set_register { index = y_index; to_ = Non_timer (Register 0) }
+    in
+    (* math:
+     - AND with [snakes_per_row - 1] (equivalent to mod [snakes_per_row]) to isolate x coord
+     - SHIFT to the left [state_to_display_shift] to account for state-space -> display-space transform  *)
+    let convert_x =
+      let set_and_value =
+        Opcode.Set_register
+          {
+            index = scratch_index;
+            to_ = Non_timer (Direct (snakes_per_row - 1));
+          }
       in
+      let isolate_x_coord =
+        Opcode.Binary_operation
+          { x_index; y_index = scratch_index; operation = `AND }
+      in
+      set_and_value :: isolate_x_coord
+      :: shift_in_place ~index:x_index ~direction:`left
+           ~n:state_to_display_shift
+    in
+    (* math
+     - SHIFT to the right [Int.floor_log2 snakes_per_row] (equivalent to div [snakes_per_row]) to isolate y coord
+     - SHIFT to the left [state_to_display_shift] to account for state-space -> display-space transform *)
+    let convert_y =
+      shift_in_place ~index:y_index ~direction:`right
+        ~n:(Int.floor_log2 snakes_per_row)
+      @ shift_in_place ~index:y_index ~direction:`left ~n:state_to_display_shift
+    in
+    set_index_for_state_read
+    :: ([ [ load; copy_to_x; copy_to_y ]; convert_x; convert_y ]
+       |> List.concat
+       |> List.map ~f:Opcode_plus.finalized)
+
+  (* Loads the coordinates of [location] into registers 0 and 1, then toggles the snake sprite
+  at those corrdinates. *)
+  let toggle_snake_opcodes location =
+    let write_snake_sprite_to_memory =
       let write_to_registers =
         List.mapi Constants.snake_sprite ~f:(fun index byte ->
             Opcode.Set_register { index; to_ = Non_timer (Direct byte) })
         |> List.map ~f:Opcode_plus.finalized
       in
+      let set_index_for_draw_write =
+        Opcode_plus.Set_index_register_to_draw_region { offset = 0 }
+      in
       let write_to_memory =
         Opcode.Store { up_to_index = List.length Constants.snake_sprite - 1 }
         |> Opcode_plus.Finalized
       in
-      [ [ set_index_for_draw_write ]; write_to_registers; [ write_to_memory ] ]
+      [ write_to_registers; [ set_index_for_draw_write ]; [ write_to_memory ] ]
       |> List.concat
     in
-    (* Upon the first draw of the snake, we only care to load the head coordinates *)
-    let set_index_for_state_read =
-      Opcode_plus.Set_index_register_to_state_region
-        { offset = State.Value.head_x.offset }
+    let load_x_and_y_draw_coords =
+      let state_offset = state_offset location in
+      convert_index_to_coords ~x_index:0 ~y_index:1 ~state_offset
     in
-    let load = Opcode.Load { up_to_index = 1 } |> Opcode_plus.Finalized in
     let set_index_for_draw_read =
       Opcode_plus.Set_index_register_to_draw_region { offset = 0 }
     in
@@ -121,117 +161,136 @@ module Draw_snake = struct
         }
       |> Opcode_plus.Finalized
     in
-    write_snake_sprite_to_memory
-    @ [ set_index_for_state_read; load; set_index_for_draw_read; draw ]
+    write_snake_sprite_to_memory @ load_x_and_y_draw_coords
+    @ [ set_index_for_draw_read; draw ]
 end
 
 module Step_snake = struct
-  (* loads [head_x] to register 0 and [head_y] to register 1 *)
-  let load_snake_location =
-    [
-      Opcode_plus.Allowed_in_subroutine.Set_index_register_to_state_region
-        { offset = State.Value.head_x.offset };
-      Opcode.Load { up_to_index = 1 }
-      |> Opcode_plus.Allowed_in_subroutine.Finalized;
-    ]
-
-  let handle_draw_diff
-      ({ shift_x_by; shift_y_by; bytes } : Direction.Draw_diff.t) =
-    let write_byte_diff_to_memory =
-      let set_index_for_draw_write =
-        Opcode_plus.Allowed_in_subroutine.Set_index_register_to_draw_region
-          { offset = 0 }
-      in
-      let write_to_registers =
-        List.mapi bytes ~f:(fun index byte ->
-            Opcode.Set_register { index; to_ = Non_timer (Direct byte) }
-            |> Opcode_plus.Allowed_in_subroutine.Finalized)
-      in
-      let write_to_memory =
-        Opcode.Store { up_to_index = List.length bytes - 1 }
-        |> Opcode_plus.Allowed_in_subroutine.Finalized
-      in
-      [ [ set_index_for_draw_write ]; write_to_registers; [ write_to_memory ] ]
-      |> List.concat
-    in
-    let update_snake_sprite =
-      let shift_x =
-        Opcode.Add_to_register { index = 0; to_add = Direct shift_x_by }
-        |> Opcode_plus.Allowed_in_subroutine.Finalized
-      in
-      let shift_y =
-        Opcode.Add_to_register { index = 1; to_add = Direct shift_y_by }
-        |> Opcode_plus.Allowed_in_subroutine.Finalized
-      in
-      let set_index_for_draw_read =
-        Opcode_plus.Allowed_in_subroutine.Set_index_register_to_draw_region
-          { offset = 0 }
-      in
-      let draw =
-        Opcode.Draw { x_index = 0; y_index = 1; num_bytes = List.length bytes }
-        |> Opcode_plus.Allowed_in_subroutine.Finalized
+  (* loads state-space index to register 0 and snake byte to register 1 *)
+  let load_snake_info endpoint =
+    let load = Opcode.Load { up_to_index = 0 } |> Opcode_plus.finalized in
+    let load_offset_to_1 =
+      let offset =
+        match endpoint with
+        | `head -> State.Value.head_index.offset
+        | `tail -> State.Value.tail_index.offset
       in
       [
-        load_snake_location; [ shift_x; shift_y; set_index_for_draw_read; draw ];
+        Opcode_plus.Set_index_register_to_state_region { offset };
+        load;
+        Opcode.Set_register { index = 1; to_ = Non_timer (Register 0) }
+        |> Opcode_plus.finalized;
       ]
-      |> List.concat
     in
-    [ write_byte_diff_to_memory; update_snake_sprite ] |> List.concat
-
-  let handle_direction direction =
-    let clear_snake = handle_draw_diff Direction.Draw_diff.clear_snake in
-    let move_snake =
-      handle_draw_diff (Direction.Draw_diff.move_snake direction)
-    in
-    let update_snake_location =
-      let move_x, move_y = Direction.movement direction in
-      let shift_x =
-        Opcode.Add_to_register { index = 0; to_add = Direct move_x }
-        |> Opcode_plus.Allowed_in_subroutine.Finalized
-      in
-      let shift_y =
-        Opcode.Add_to_register { index = 1; to_add = Direct move_y }
-        |> Opcode_plus.Allowed_in_subroutine.Finalized
-      in
-      let set_index_for_state_write =
-        Opcode_plus.Allowed_in_subroutine.Set_index_register_to_state_region
-          { offset = State.Value.head_x.offset }
-      in
-      let write_snake_location =
-        Opcode.Store { up_to_index = 1 }
-        |> Opcode_plus.Allowed_in_subroutine.Finalized
-      in
+    let load_snake_byte_to_0 =
       [
-        load_snake_location;
-        [ shift_x; shift_y; set_index_for_state_write; write_snake_location ];
+        Opcode_plus.Set_index_register_to_state_region
+          { offset = State.Value.snake.offset };
+        Opcode.Add_to_index_register { index = 1 } |> Opcode_plus.finalized;
+        load;
       ]
-      |> List.concat
     in
-    [ clear_snake; move_snake; update_snake_location ] |> List.concat
+    load_offset_to_1 @ load_snake_byte_to_0
 
-  let skip_if direction =
+  let clear_snake_byte__offset_in_1 =
+    let set_value_for_state_write =
+      Opcode.Set_register { index = 0; to_ = Non_timer (Direct 0) }
+      |> Opcode_plus.finalized
+    in
+    let set_index_for_state_write =
+      [
+        Opcode_plus.Set_index_register_to_state_region
+          { offset = State.Value.snake.offset };
+        Opcode.Add_to_index_register { index = 1 } |> Opcode_plus.finalized;
+      ]
+    in
+    let store = Opcode.Store { up_to_index = 0 } |> Opcode_plus.finalized in
+    [ [ set_value_for_state_write ]; set_index_for_state_write; [ store ] ]
+    |> List.concat
+
+  let skip_if ~left_index direction =
     Opcode.Skip_if_register
       {
-        left_index = 0;
+        left_index;
         right = Direct (Direction.encode direction);
         skip_if = Opcode.Skip_if.Not_equal;
       }
     |> Opcode_plus.Finalized
 
-  let loop =
-    let set_index_for_state_read =
-      Opcode_plus.Set_index_register_to_state_region
-        { offset = State.Value.direction.offset }
+  let transition_offset__offset_in_1_byte_in_2 =
+    let handle_direction (direction : Direction.t) =
+      let set_operand =
+        let value =
+          match direction with
+          | Up | Down -> Draw_snake.snakes_per_row
+          | Right | Left -> 1
+        in
+        Opcode.Set_register { index = 0; to_ = Non_timer (Direct value) }
+      in
+      let update_offset =
+        match direction with
+        | Up | Left ->
+            Opcode.Subtract { x_index = 1; y_index = 0; set_x_to = `x_minus_y }
+        | Right | Down ->
+            Opcode.Add_to_register { index = 1; to_add = Register 0 }
+      in
+      [ set_operand; update_offset ]
+      |> List.map ~f:Opcode_plus.Allowed_in_subroutine.finalized
     in
-    let load = Opcode.Load { up_to_index = 0 } |> Opcode_plus.Finalized in
-    let direction_handling =
+    let copy_direction_to_0 =
+      [
+        Opcode.Set_register { index = 0; to_ = Non_timer (Direct 0x03) };
+        Opcode.Binary_operation { x_index = 0; y_index = 2; operation = `AND };
+      ]
+      |> List.map ~f:Opcode_plus.finalized
+    in
+    let direction_subroutines =
       List.bind Direction.all ~f:(fun direction ->
           [
-            skip_if direction;
+            skip_if ~left_index:0 direction;
             Opcode_plus.Subroutine_body (handle_direction direction);
           ])
     in
-    [ set_index_for_state_read; load ] @ direction_handling
+    copy_direction_to_0 @ direction_subroutines
+
+  let transition_in_state location =
+    let snake_offset_in_1_byte_in_2 =
+      load_snake_info location
+      @ [
+          Opcode.Set_register { index = 2; to_ = Non_timer (Register 0) }
+          |> Opcode_plus.finalized;
+        ]
+    in
+    let clear_if_tail =
+      match location with `head -> [] | `tail -> clear_snake_byte__offset_in_1
+    in
+    let update_offset =
+      let set_value_for_state_write =
+        Opcode.Set_register { index = 0; to_ = Non_timer (Register 1) }
+        |> Opcode_plus.finalized
+      in
+      let set_index_for_state_write =
+        Opcode_plus.Set_index_register_to_state_region
+          { offset = state_offset location }
+      in
+      let store = Opcode.Store { up_to_index = 0 } |> Opcode_plus.finalized in
+      transition_offset__offset_in_1_byte_in_2
+      @ [ set_value_for_state_write; set_index_for_state_write; store ]
+    in
+    [ snake_offset_in_1_byte_in_2; clear_if_tail; update_offset ] |> List.concat
+
+  let loop =
+    let clear_tail_display = Draw_snake.toggle_snake_opcodes `tail in
+    let transition_tail_state = transition_in_state `tail in
+    let transition_head_state = transition_in_state `head in
+    let draw_head_display = Draw_snake.toggle_snake_opcodes `head in
+    [
+      clear_tail_display;
+      transition_tail_state;
+      transition_head_state;
+      draw_head_display;
+    ]
+    |> List.concat
 
   let opcodes =
     let num_opcodes_in_loop = List.length loop in
@@ -241,13 +300,13 @@ end
 let opcodes =
   [
     Display_title_and_wait.opcodes;
-    Init_game_state.opcodes;
-    Draw_snake.opcodes;
+    State.init;
+    (* upon startup, the snake is length 2 and we only have to draw the head and tail *)
+    Draw_snake.toggle_snake_opcodes `head;
+    Draw_snake.toggle_snake_opcodes `tail;
     Step_snake.opcodes;
   ]
-  |> List.concat
-  |> Opcode_plus.finalize_all_exn
-       ~scratch_bytes_for_draw:Constants.scratch_bytes_for_draw
+  |> List.concat |> Opcode_plus.finalize_all_exn
 
 let%expect_test "dump [opcodes]" =
   List.iteri opcodes ~f:(fun i opcode ->
@@ -259,7 +318,7 @@ let%expect_test "dump [opcodes]" =
       [%string "%{memory_location#Int}: %{opcode}"] |> print_endline);
   [%expect
     {|
-    512: (Set_index_register(value 936))
+    512: (Set_index_register(value 974))
     514: (Set_register(index 0)(to_(Non_timer(Direct 96))))
     516: (Set_register(index 1)(to_(Non_timer(Direct 144))))
     518: (Set_register(index 2)(to_(Non_timer(Direct 64))))
@@ -270,7 +329,7 @@ let%expect_test "dump [opcodes]" =
     528: (Set_register(index 0)(to_(Non_timer(Direct 15))))
     530: (Set_register(index 1)(to_(Non_timer(Direct 13))))
     532: (Draw(x_index 0)(y_index 1)(num_bytes 6))
-    534: (Set_index_register(value 936))
+    534: (Set_index_register(value 974))
     536: (Set_register(index 0)(to_(Non_timer(Direct 144))))
     538: (Set_register(index 1)(to_(Non_timer(Direct 144))))
     540: (Set_register(index 2)(to_(Non_timer(Direct 208))))
@@ -281,7 +340,7 @@ let%expect_test "dump [opcodes]" =
     550: (Set_register(index 0)(to_(Non_timer(Direct 23))))
     552: (Set_register(index 1)(to_(Non_timer(Direct 13))))
     554: (Draw(x_index 0)(y_index 1)(num_bytes 6))
-    556: (Set_index_register(value 936))
+    556: (Set_index_register(value 974))
     558: (Set_register(index 0)(to_(Non_timer(Direct 96))))
     560: (Set_register(index 1)(to_(Non_timer(Direct 144))))
     562: (Set_register(index 2)(to_(Non_timer(Direct 144))))
@@ -292,7 +351,7 @@ let%expect_test "dump [opcodes]" =
     572: (Set_register(index 0)(to_(Non_timer(Direct 31))))
     574: (Set_register(index 1)(to_(Non_timer(Direct 13))))
     576: (Draw(x_index 0)(y_index 1)(num_bytes 6))
-    578: (Set_index_register(value 936))
+    578: (Set_index_register(value 974))
     580: (Set_register(index 0)(to_(Non_timer(Direct 144))))
     582: (Set_register(index 1)(to_(Non_timer(Direct 160))))
     584: (Set_register(index 2)(to_(Non_timer(Direct 192))))
@@ -303,7 +362,7 @@ let%expect_test "dump [opcodes]" =
     594: (Set_register(index 0)(to_(Non_timer(Direct 39))))
     596: (Set_register(index 1)(to_(Non_timer(Direct 13))))
     598: (Draw(x_index 0)(y_index 1)(num_bytes 6))
-    600: (Set_index_register(value 936))
+    600: (Set_index_register(value 974))
     602: (Set_register(index 0)(to_(Non_timer(Direct 240))))
     604: (Set_register(index 1)(to_(Non_timer(Direct 128))))
     606: (Set_register(index 2)(to_(Non_timer(Direct 128))))
@@ -316,159 +375,178 @@ let%expect_test "dump [opcodes]" =
     620: (Draw(x_index 0)(y_index 1)(num_bytes 6))
     622: (Get_key(index 0))
     624: Clear_screen
-    626: (Set_index_register(value 944))
-    628: (Set_register(index 0)(to_(Non_timer(Direct 0))))
-    630: (Set_register(index 1)(to_(Non_timer(Direct 28))))
-    632: (Set_register(index 2)(to_(Non_timer(Direct 12))))
-    634: (Store(up_to_index 2))
-    636: (Set_index_register(value 936))
-    638: (Set_register(index 0)(to_(Non_timer(Direct 240))))
-    640: (Set_register(index 1)(to_(Non_timer(Direct 240))))
-    642: (Set_register(index 2)(to_(Non_timer(Direct 240))))
-    644: (Set_register(index 3)(to_(Non_timer(Direct 240))))
-    646: (Store(up_to_index 3))
-    648: (Set_index_register(value 945))
-    650: (Load(up_to_index 1))
-    652: (Set_index_register(value 936))
-    654: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    656: (Set_index_register(value 944))
-    658: (Load(up_to_index 0))
-    660: (Skip_if_register(left_index 0)(right(Direct 0))(skip_if Not_equal))
-    662: (Subroutine_start(memory_location 680))
-    664: (Skip_if_register(left_index 0)(right(Direct 1))(skip_if Not_equal))
-    666: (Subroutine_start(memory_location 744))
-    668: (Skip_if_register(left_index 0)(right(Direct 2))(skip_if Not_equal))
-    670: (Subroutine_start(memory_location 808))
-    672: (Skip_if_register(left_index 0)(right(Direct 3))(skip_if Not_equal))
-    674: (Subroutine_start(memory_location 872))
-    676: (Jump(new_program_counter_base 656)(with_offset false))
-    678: Halt
-    680: (Set_index_register(value 936))
-    682: (Set_register(index 0)(to_(Non_timer(Direct 240))))
-    684: (Set_register(index 1)(to_(Non_timer(Direct 240))))
-    686: (Set_register(index 2)(to_(Non_timer(Direct 240))))
-    688: (Set_register(index 3)(to_(Non_timer(Direct 240))))
-    690: (Store(up_to_index 3))
-    692: (Set_index_register(value 945))
-    694: (Load(up_to_index 1))
-    696: (Add_to_register(index 0)(to_add(Direct 0)))
-    698: (Add_to_register(index 1)(to_add(Direct 0)))
-    700: (Set_index_register(value 936))
-    702: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    704: (Set_index_register(value 936))
-    706: (Set_register(index 0)(to_(Non_timer(Direct 240))))
-    708: (Set_register(index 1)(to_(Non_timer(Direct 240))))
-    710: (Set_register(index 2)(to_(Non_timer(Direct 240))))
-    712: (Set_register(index 3)(to_(Non_timer(Direct 240))))
-    714: (Store(up_to_index 3))
-    716: (Set_index_register(value 945))
-    718: (Load(up_to_index 1))
-    720: (Add_to_register(index 0)(to_add(Direct 0)))
-    722: (Add_to_register(index 1)(to_add(Direct 28)))
-    724: (Set_index_register(value 936))
-    726: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    728: (Set_index_register(value 945))
-    730: (Load(up_to_index 1))
-    732: (Add_to_register(index 0)(to_add(Direct 0)))
-    734: (Add_to_register(index 1)(to_add(Direct 28)))
-    736: (Set_index_register(value 945))
-    738: (Store(up_to_index 1))
-    740: Subroutine_end
-    742: Halt
-    744: (Set_index_register(value 936))
-    746: (Set_register(index 0)(to_(Non_timer(Direct 240))))
-    748: (Set_register(index 1)(to_(Non_timer(Direct 240))))
-    750: (Set_register(index 2)(to_(Non_timer(Direct 240))))
-    752: (Set_register(index 3)(to_(Non_timer(Direct 240))))
-    754: (Store(up_to_index 3))
-    756: (Set_index_register(value 945))
-    758: (Load(up_to_index 1))
-    760: (Add_to_register(index 0)(to_add(Direct 0)))
-    762: (Add_to_register(index 1)(to_add(Direct 0)))
-    764: (Set_index_register(value 936))
-    766: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    768: (Set_index_register(value 936))
-    770: (Set_register(index 0)(to_(Non_timer(Direct 240))))
-    772: (Set_register(index 1)(to_(Non_timer(Direct 240))))
-    774: (Set_register(index 2)(to_(Non_timer(Direct 240))))
-    776: (Set_register(index 3)(to_(Non_timer(Direct 240))))
-    778: (Store(up_to_index 3))
-    780: (Set_index_register(value 945))
-    782: (Load(up_to_index 1))
-    784: (Add_to_register(index 0)(to_add(Direct 4)))
-    786: (Add_to_register(index 1)(to_add(Direct 0)))
-    788: (Set_index_register(value 936))
-    790: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    792: (Set_index_register(value 945))
-    794: (Load(up_to_index 1))
-    796: (Add_to_register(index 0)(to_add(Direct 4)))
-    798: (Add_to_register(index 1)(to_add(Direct 0)))
-    800: (Set_index_register(value 945))
-    802: (Store(up_to_index 1))
-    804: Subroutine_end
-    806: Halt
-    808: (Set_index_register(value 936))
-    810: (Set_register(index 0)(to_(Non_timer(Direct 240))))
-    812: (Set_register(index 1)(to_(Non_timer(Direct 240))))
-    814: (Set_register(index 2)(to_(Non_timer(Direct 240))))
-    816: (Set_register(index 3)(to_(Non_timer(Direct 240))))
-    818: (Store(up_to_index 3))
-    820: (Set_index_register(value 945))
-    822: (Load(up_to_index 1))
-    824: (Add_to_register(index 0)(to_add(Direct 0)))
-    826: (Add_to_register(index 1)(to_add(Direct 0)))
-    828: (Set_index_register(value 936))
-    830: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    832: (Set_index_register(value 936))
-    834: (Set_register(index 0)(to_(Non_timer(Direct 240))))
-    836: (Set_register(index 1)(to_(Non_timer(Direct 240))))
-    838: (Set_register(index 2)(to_(Non_timer(Direct 240))))
-    840: (Set_register(index 3)(to_(Non_timer(Direct 240))))
-    842: (Store(up_to_index 3))
-    844: (Set_index_register(value 945))
-    846: (Load(up_to_index 1))
-    848: (Add_to_register(index 0)(to_add(Direct 0)))
-    850: (Add_to_register(index 1)(to_add(Direct 4)))
-    852: (Set_index_register(value 936))
-    854: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    856: (Set_index_register(value 945))
-    858: (Load(up_to_index 1))
-    860: (Add_to_register(index 0)(to_add(Direct 0)))
-    862: (Add_to_register(index 1)(to_add(Direct 4)))
-    864: (Set_index_register(value 945))
-    866: (Store(up_to_index 1))
-    868: Subroutine_end
-    870: Halt
-    872: (Set_index_register(value 936))
-    874: (Set_register(index 0)(to_(Non_timer(Direct 240))))
-    876: (Set_register(index 1)(to_(Non_timer(Direct 240))))
-    878: (Set_register(index 2)(to_(Non_timer(Direct 240))))
-    880: (Set_register(index 3)(to_(Non_timer(Direct 240))))
-    882: (Store(up_to_index 3))
-    884: (Set_index_register(value 945))
-    886: (Load(up_to_index 1))
-    888: (Add_to_register(index 0)(to_add(Direct 0)))
-    890: (Add_to_register(index 1)(to_add(Direct 0)))
-    892: (Set_index_register(value 936))
-    894: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    896: (Set_index_register(value 936))
-    898: (Set_register(index 0)(to_(Non_timer(Direct 240))))
-    900: (Set_register(index 1)(to_(Non_timer(Direct 240))))
-    902: (Set_register(index 2)(to_(Non_timer(Direct 240))))
-    904: (Set_register(index 3)(to_(Non_timer(Direct 240))))
-    906: (Store(up_to_index 3))
-    908: (Set_index_register(value 945))
-    910: (Load(up_to_index 1))
-    912: (Add_to_register(index 0)(to_add(Direct 60)))
-    914: (Add_to_register(index 1)(to_add(Direct 0)))
-    916: (Set_index_register(value 936))
-    918: (Draw(x_index 0)(y_index 1)(num_bytes 4))
-    920: (Set_index_register(value 945))
-    922: (Load(up_to_index 1))
-    924: (Add_to_register(index 0)(to_add(Direct 60)))
-    926: (Add_to_register(index 1)(to_add(Direct 0)))
-    928: (Set_index_register(value 945))
-    930: (Store(up_to_index 1))
-    932: Subroutine_end
-    934: Halt
+    626: (Set_register(index 0)(to_(Non_timer(Direct 55))))
+    628: (Set_register(index 1)(to_(Non_timer(Direct 54))))
+    630: (Set_index_register(value 980))
+    632: (Store(up_to_index 1))
+    634: (Set_register(index 0)(to_(Non_timer(Direct 5))))
+    636: (Set_register(index 1)(to_(Non_timer(Direct 5))))
+    638: (Set_index_register(value 1036))
+    640: (Store(up_to_index 0))
+    642: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    644: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    646: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    648: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    650: (Set_index_register(value 974))
+    652: (Store(up_to_index 3))
+    654: (Set_index_register(value 980))
+    656: (Load(up_to_index 0))
+    658: (Set_register(index 0)(to_(Non_timer(Register 0))))
+    660: (Set_register(index 1)(to_(Non_timer(Register 0))))
+    662: (Set_register(index 2)(to_(Non_timer(Direct 15))))
+    664: (Binary_operation(x_index 0)(y_index 2)(operation AND))
+    666: (Shift(x_index 0)(y_index 0)(direction left))
+    668: (Shift(x_index 0)(y_index 0)(direction left))
+    670: (Shift(x_index 1)(y_index 1)(direction right))
+    672: (Shift(x_index 1)(y_index 1)(direction right))
+    674: (Shift(x_index 1)(y_index 1)(direction right))
+    676: (Shift(x_index 1)(y_index 1)(direction right))
+    678: (Shift(x_index 1)(y_index 1)(direction left))
+    680: (Shift(x_index 1)(y_index 1)(direction left))
+    682: (Set_index_register(value 974))
+    684: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    686: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    688: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    690: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    692: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    694: (Set_index_register(value 974))
+    696: (Store(up_to_index 3))
+    698: (Set_index_register(value 981))
+    700: (Load(up_to_index 0))
+    702: (Set_register(index 0)(to_(Non_timer(Register 0))))
+    704: (Set_register(index 1)(to_(Non_timer(Register 0))))
+    706: (Set_register(index 2)(to_(Non_timer(Direct 15))))
+    708: (Binary_operation(x_index 0)(y_index 2)(operation AND))
+    710: (Shift(x_index 0)(y_index 0)(direction left))
+    712: (Shift(x_index 0)(y_index 0)(direction left))
+    714: (Shift(x_index 1)(y_index 1)(direction right))
+    716: (Shift(x_index 1)(y_index 1)(direction right))
+    718: (Shift(x_index 1)(y_index 1)(direction right))
+    720: (Shift(x_index 1)(y_index 1)(direction right))
+    722: (Shift(x_index 1)(y_index 1)(direction left))
+    724: (Shift(x_index 1)(y_index 1)(direction left))
+    726: (Set_index_register(value 974))
+    728: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    730: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    732: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    734: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    736: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    738: (Set_index_register(value 974))
+    740: (Store(up_to_index 3))
+    742: (Set_index_register(value 981))
+    744: (Load(up_to_index 0))
+    746: (Set_register(index 0)(to_(Non_timer(Register 0))))
+    748: (Set_register(index 1)(to_(Non_timer(Register 0))))
+    750: (Set_register(index 2)(to_(Non_timer(Direct 15))))
+    752: (Binary_operation(x_index 0)(y_index 2)(operation AND))
+    754: (Shift(x_index 0)(y_index 0)(direction left))
+    756: (Shift(x_index 0)(y_index 0)(direction left))
+    758: (Shift(x_index 1)(y_index 1)(direction right))
+    760: (Shift(x_index 1)(y_index 1)(direction right))
+    762: (Shift(x_index 1)(y_index 1)(direction right))
+    764: (Shift(x_index 1)(y_index 1)(direction right))
+    766: (Shift(x_index 1)(y_index 1)(direction left))
+    768: (Shift(x_index 1)(y_index 1)(direction left))
+    770: (Set_index_register(value 974))
+    772: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    774: (Set_index_register(value 981))
+    776: (Load(up_to_index 0))
+    778: (Set_register(index 1)(to_(Non_timer(Register 0))))
+    780: (Set_index_register(value 982))
+    782: (Add_to_index_register(index 1))
+    784: (Load(up_to_index 0))
+    786: (Set_register(index 2)(to_(Non_timer(Register 0))))
+    788: (Set_register(index 0)(to_(Non_timer(Direct 0))))
+    790: (Set_index_register(value 982))
+    792: (Add_to_index_register(index 1))
+    794: (Store(up_to_index 0))
+    796: (Set_register(index 0)(to_(Non_timer(Direct 3))))
+    798: (Binary_operation(x_index 0)(y_index 2)(operation AND))
+    800: (Skip_if_register(left_index 0)(right(Direct 0))(skip_if Not_equal))
+    802: (Subroutine_start(memory_location 910))
+    804: (Skip_if_register(left_index 0)(right(Direct 1))(skip_if Not_equal))
+    806: (Subroutine_start(memory_location 918))
+    808: (Skip_if_register(left_index 0)(right(Direct 2))(skip_if Not_equal))
+    810: (Subroutine_start(memory_location 926))
+    812: (Skip_if_register(left_index 0)(right(Direct 3))(skip_if Not_equal))
+    814: (Subroutine_start(memory_location 934))
+    816: (Set_register(index 0)(to_(Non_timer(Register 1))))
+    818: (Set_index_register(value 981))
+    820: (Store(up_to_index 0))
+    822: (Set_index_register(value 980))
+    824: (Load(up_to_index 0))
+    826: (Set_register(index 1)(to_(Non_timer(Register 0))))
+    828: (Set_index_register(value 982))
+    830: (Add_to_index_register(index 1))
+    832: (Load(up_to_index 0))
+    834: (Set_register(index 2)(to_(Non_timer(Register 0))))
+    836: (Set_register(index 0)(to_(Non_timer(Direct 3))))
+    838: (Binary_operation(x_index 0)(y_index 2)(operation AND))
+    840: (Skip_if_register(left_index 0)(right(Direct 0))(skip_if Not_equal))
+    842: (Subroutine_start(memory_location 942))
+    844: (Skip_if_register(left_index 0)(right(Direct 1))(skip_if Not_equal))
+    846: (Subroutine_start(memory_location 950))
+    848: (Skip_if_register(left_index 0)(right(Direct 2))(skip_if Not_equal))
+    850: (Subroutine_start(memory_location 958))
+    852: (Skip_if_register(left_index 0)(right(Direct 3))(skip_if Not_equal))
+    854: (Subroutine_start(memory_location 966))
+    856: (Set_register(index 0)(to_(Non_timer(Register 1))))
+    858: (Set_index_register(value 980))
+    860: (Store(up_to_index 0))
+    862: (Set_register(index 0)(to_(Non_timer(Direct 240))))
+    864: (Set_register(index 1)(to_(Non_timer(Direct 240))))
+    866: (Set_register(index 2)(to_(Non_timer(Direct 240))))
+    868: (Set_register(index 3)(to_(Non_timer(Direct 240))))
+    870: (Set_index_register(value 974))
+    872: (Store(up_to_index 3))
+    874: (Set_index_register(value 980))
+    876: (Load(up_to_index 0))
+    878: (Set_register(index 0)(to_(Non_timer(Register 0))))
+    880: (Set_register(index 1)(to_(Non_timer(Register 0))))
+    882: (Set_register(index 2)(to_(Non_timer(Direct 15))))
+    884: (Binary_operation(x_index 0)(y_index 2)(operation AND))
+    886: (Shift(x_index 0)(y_index 0)(direction left))
+    888: (Shift(x_index 0)(y_index 0)(direction left))
+    890: (Shift(x_index 1)(y_index 1)(direction right))
+    892: (Shift(x_index 1)(y_index 1)(direction right))
+    894: (Shift(x_index 1)(y_index 1)(direction right))
+    896: (Shift(x_index 1)(y_index 1)(direction right))
+    898: (Shift(x_index 1)(y_index 1)(direction left))
+    900: (Shift(x_index 1)(y_index 1)(direction left))
+    902: (Set_index_register(value 974))
+    904: (Draw(x_index 0)(y_index 1)(num_bytes 4))
+    906: (Jump(new_program_counter_base 730)(with_offset false))
+    908: Halt
+    910: (Set_register(index 0)(to_(Non_timer(Direct 16))))
+    912: (Subtract(x_index 1)(y_index 0)(set_x_to x_minus_y))
+    914: Subroutine_end
+    916: Halt
+    918: (Set_register(index 0)(to_(Non_timer(Direct 1))))
+    920: (Add_to_register(index 1)(to_add(Register 0)))
+    922: Subroutine_end
+    924: Halt
+    926: (Set_register(index 0)(to_(Non_timer(Direct 16))))
+    928: (Add_to_register(index 1)(to_add(Register 0)))
+    930: Subroutine_end
+    932: Halt
+    934: (Set_register(index 0)(to_(Non_timer(Direct 1))))
+    936: (Subtract(x_index 1)(y_index 0)(set_x_to x_minus_y))
+    938: Subroutine_end
+    940: Halt
+    942: (Set_register(index 0)(to_(Non_timer(Direct 16))))
+    944: (Subtract(x_index 1)(y_index 0)(set_x_to x_minus_y))
+    946: Subroutine_end
+    948: Halt
+    950: (Set_register(index 0)(to_(Non_timer(Direct 1))))
+    952: (Add_to_register(index 1)(to_add(Register 0)))
+    954: Subroutine_end
+    956: Halt
+    958: (Set_register(index 0)(to_(Non_timer(Direct 16))))
+    960: (Add_to_register(index 1)(to_add(Register 0)))
+    962: Subroutine_end
+    964: Halt
+    966: (Set_register(index 0)(to_(Non_timer(Direct 1))))
+    968: (Subtract(x_index 1)(y_index 0)(set_x_to x_minus_y))
+    970: Subroutine_end
+    972: Halt
     |}]
