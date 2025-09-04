@@ -1,5 +1,6 @@
 _build/
 .gitignore
 .ocamlformat
+.DS_Store
 chip_8.opam
 dune-project
