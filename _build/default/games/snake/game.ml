@@ -302,8 +302,8 @@ let opcodes =
     Display_title_and_wait.opcodes;
     State.init;
     (* upon startup, the snake is length 2 and we only have to draw the head and tail *)
-    Draw_snake.toggle_snake_opcodes `head;
     Draw_snake.toggle_snake_opcodes `tail;
+    Draw_snake.toggle_snake_opcodes `head;
     Step_snake.opcodes;
   ]
   |> List.concat |> Opcode_plus.finalize_all_exn
@@ -389,7 +389,7 @@ let%expect_test "dump [opcodes]" =
     648: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     650: (Set_index_register(value 974))
     652: (Store(up_to_index 3))
-    654: (Set_index_register(value 980))
+    654: (Set_index_register(value 981))
     656: (Load(up_to_index 0))
     658: (Set_register(index 0)(to_(Non_timer(Register 0))))
     660: (Set_register(index 1)(to_(Non_timer(Register 0))))
@@ -411,7 +411,7 @@ let%expect_test "dump [opcodes]" =
     692: (Set_register(index 3)(to_(Non_timer(Direct 240))))
     694: (Set_index_register(value 974))
     696: (Store(up_to_index 3))
-    698: (Set_index_register(value 981))
+    698: (Set_index_register(value 980))
     700: (Load(up_to_index 0))
     702: (Set_register(index 0)(to_(Non_timer(Register 0))))
     704: (Set_register(index 1)(to_(Non_timer(Register 0))))
