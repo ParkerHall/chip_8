@@ -4,7 +4,7 @@ open! Import
 module Snake_byte = struct
   type t = int
 
-  let create direction = (1 lsl 2) lor Direction.encode direction
+  let create direction = (1 lsl 7) lor Direction.encode direction
 
   let%expect_test "all possible snake bytes" =
     Direction.all
@@ -13,10 +13,10 @@ module Snake_byte = struct
            |> Hexstring_helpers.format ~num_nibbles:2
            |> print_endline);
     [%expect {|
-      04
-      05
-      06
-      07
+      80
+      81
+      82
+      83
       |}]
 end
 
@@ -52,7 +52,7 @@ let%expect_test "[total_bytes]" =
   print_s [%message (total_bytes : int)];
   [%expect {| (total_bytes 130) |}]
 
-let init =
+let init direction =
   let set_index_register ~offset =
     Opcode_plus.Set_index_register_to_state_region { offset }
   in
@@ -64,19 +64,28 @@ let init =
     Opcode.Store { up_to_index } |> Opcode_plus.finalized
   in
   let head_start_index =
-    Constants.snake_start_x
-    + Constants.snake_start_y
-      * (Constants.display_pixel_width / Constants.size_of_snake)
+    let snakes_per_row =
+      Constants.display_pixel_width / Constants.size_of_snake
+    in
+    Constants.snake_start_x + (Constants.snake_start_y * snakes_per_row)
   in
-  let init_snake = Snake_byte.create Direction.Right in
-  (* note that we init the snake as size 2. both snake bytes start facing [Right] *)
+  let head_to_tail_diff =
+    let { Direction.Movement.sign; magnitude } =
+      Direction.reverse direction |> Direction.movement
+    in
+    match sign with `Pos -> magnitude | `Neg -> -magnitude
+  in
+  let init_snake = Snake_byte.create direction in
+  (* note that we init the snake as size 2 *)
   [
     set_register ~index:0 ~value:head_start_index;
-    set_register ~index:1 ~value:(head_start_index - 1);
+    set_register ~index:1 ~value:(head_start_index + head_to_tail_diff);
     set_index_register ~offset:0;
     store ~up_to_index:1;
     set_register ~index:0 ~value:init_snake;
-    set_register ~index:1 ~value:init_snake;
-    set_index_register ~offset:(Value.snake.offset + head_start_index - 1);
+    set_index_register ~offset:(Value.snake.offset + head_start_index);
+    store ~up_to_index:0;
+    set_index_register
+      ~offset:(Value.snake.offset + head_start_index + head_to_tail_diff);
     store ~up_to_index:0;
   ]

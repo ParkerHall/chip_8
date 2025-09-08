@@ -6,7 +6,7 @@ module Constants = struct
   include Constants
 
   let keypress_frequency = Time_ns.Span.of_sec (1. /. 60.)
-  let opcode_frequency = Time_ns.Span.of_sec (1. /. 60.)
+  let opcode_frequency = Time_ns.Span.of_sec (1. /. 6000.)
   let max_8_bit_int = int_of_float (2. ** 8.) - 1
   let repeat_keypress_for_n_cycles = 5
   let timer_frequency = Time_ns.Span.of_sec (1. /. 60.)

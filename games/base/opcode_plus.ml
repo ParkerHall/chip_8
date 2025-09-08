@@ -208,6 +208,10 @@ let finalize_all_exn ts =
   let start_of_state_region =
     start_of_draw_region + scratch_bytes_for_draw ts
   in
+  [%log.global.debug
+    "finalizing opcodes"
+      (start_of_draw_region : int)
+      (start_of_state_region : int)];
   List.mapi ts ~f:(fun i opcode ->
       let program_counter = Constants.program_start_memory_location + (i * 2) in
       match opcode with

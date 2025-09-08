@@ -88,9 +88,16 @@ let to_string_hum t =
                  "Invalid memory size -- expected to be divisible by 4" (t : t)])
   |> String.concat ~sep:"\n"
 
-let read t ~loc = Bytes.get t loc |> int_of_char
+let read t ~loc =
+  let value = Bytes.get t loc |> int_of_char in
+  [%log.global.debug "Memory read" (loc : int) (value : int)];
+  value
+
 let read_hum t ~loc = read t ~loc |> Hexstring_helpers.format ~num_nibbles:2
-let write t ~loc value = Bytes.set t loc (char_of_int value)
+
+let write t ~loc value =
+  [%log.global.debug "Memory write" (loc : int) (value : int)];
+  Bytes.set t loc (char_of_int value)
 
 module Helpers = struct
   let font_location ~hex_char = hex_char * Constants.bytes_per_font_char

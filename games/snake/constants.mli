@@ -4,6 +4,7 @@ open! Import
 (** specific to snake game *)
 
 val size_of_snake : int
+val snakes_per_row : int
 val snake_sprite : int list
 val snake_start_x : int
 val snake_start_y : int

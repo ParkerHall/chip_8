@@ -4,15 +4,10 @@ open! Import
 type t = Up | Right | Down | Left [@@deriving enumerate, variants]
 
 val encode : t -> int
+val reverse : t -> t
 
-val movement : t -> int * int
-(** [movement t] returns the [(dx, dy)] movement diffs to apply to the head of
-    the snake sprite *)
-
-module Draw_diff : sig
-  type direction = t
-  type t = { shift_x_by : int; shift_y_by : int; bytes : int list }
-
-  val clear_snake : t
-  val move_snake : direction -> t
+module Movement : sig
+  type t = { sign : [ `Pos | `Neg ]; magnitude : int }
 end
+
+val movement : t -> Movement.t

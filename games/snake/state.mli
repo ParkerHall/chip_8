@@ -17,4 +17,4 @@ module Value : sig
 end
 
 val total_bytes : int
-val init : Opcode_plus.t list
+val init : Direction.t -> Opcode_plus.t list
