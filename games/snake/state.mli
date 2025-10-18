@@ -4,6 +4,7 @@ open! Import
 module Snake_byte : sig
   type t
 
+  val to_int : t -> int
   val create : Direction.t -> t
 end
 

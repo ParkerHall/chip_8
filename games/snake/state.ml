@@ -4,6 +4,7 @@ open! Import
 module Snake_byte = struct
   type t = int
 
+  let to_int = Fn.id
   let create direction = (1 lsl 7) lor Direction.encode direction
 
   let%expect_test "all possible snake bytes" =
